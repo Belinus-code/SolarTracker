@@ -329,12 +329,15 @@
     </main>
 
     <script>
-        lucide.createIcons();
+        // Init Icons
+        if (typeof lucide !== 'undefined') lucide.createIcons();
 
         // Chart.js Globale Defaults
-        Chart.defaults.color = '#9ca3af';
-        Chart.defaults.borderColor = '#374151';
-        Chart.defaults.font.family = "sans-serif";
+        if (typeof Chart !== 'undefined') {
+            Chart.defaults.color = '#9ca3af';
+            Chart.defaults.borderColor = '#374151';
+            Chart.defaults.font.family = "sans-serif";
+        }
 
         let solarChartObj = null;
         let batteryChartObj = null;
@@ -464,7 +467,7 @@
                     txtChargeState.innerText = "Entladen";
                     txtChargeState.className = "font-mono font-medium text-solar";
                 }
-                lucide.createIcons();
+                if (typeof lucide !== 'undefined') lucide.createIcons();
             }
 
             // Inverter Animation - Läuft nur, wenn W > 5 UND der Inverter auch echte 230V ausgibt (inv_volt == 1)
