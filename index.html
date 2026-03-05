@@ -594,9 +594,15 @@
             const dv = new DataView(buffer);
             const numSlots = Math.floor(buffer.byteLength / 5);
             
-            let solar_amp_offset = 1780;
-            let battery_amp_offset_offset = 0;
+            // Konfiguration laden (mit sicheren Fallbacks)
+            let solar_amp_offset = parseFloat(document.getElementById('c_sol_off').value) || 15000;
+            let battery_amp_offset_offset = parseFloat(document.getElementById('c_bat_off_diff').value) || 0;
+            const solar_amp_corr = parseFloat(document.getElementById('c_sol_corr').value) || 1.0;
+            const battery_amp_corr = parseFloat(document.getElementById('c_bat_corr').value) || 1.0;
+            const ignore_amp = parseFloat(document.getElementById('c_ign_amp').value) || 1.0;
             const amp_step = 0.0138718;
+            
+            let battery_amp_offset = solar_amp_offset + battery_amp_offset_offset;
 
             const dailyData = {}; 
 
@@ -608,33 +614,33 @@
                 const b3 = dv.getUint8(offset + 3);
                 const b4 = dv.getUint8(offset + 4);
 
+                // --- Dekomprimierung ---
                 const sol_amp_comp = (b0 << 4) | (b1 >> 4);
                 const bat_amp_comp = ((b1 & 0x0F) << 8) | b2;
-                const sol_volt_comp = b3 & 0x7F;
-                const bat_volt_comp = b4;
-
+                
+                const sol_volt_raw = ((b3 & 0x7F) << 8) | 128; 
+                const bat_volt_raw = (b4 * 48) + 20753;
+                
                 const sol_amp_raw = (sol_amp_comp << 1) + 15000;
                 const bat_amp_raw = bat_amp_comp << 3;
-                
-                const sol_volt_raw = (sol_volt_comp << 8) | 128; 
-                const bat_volt_raw = (bat_volt_comp * 48) + 20753;
 
-                const solar_voltage = sol_volt_raw * (40 / 32767.0);
-                const battery_voltage = bat_volt_raw * (30 / 32767.0);
+                // --- Konvertierung (1:1 aus C++) ---
+                let solar_voltage = sol_volt_raw * (40 / 32767.0);
+                let battery_voltage = bat_volt_raw * (30 / 32767.0);
 
                 if (solar_voltage < 5.0) {
                     solar_amp_offset = (solar_amp_offset * 0.99) + (sol_amp_raw * 0.01);
+                    battery_amp_offset = solar_amp_offset + battery_amp_offset_offset;
                 }
-                const battery_amp_offset = solar_amp_offset + battery_amp_offset_offset;
 
-                let solar_ampere = (sol_amp_raw - solar_amp_offset) * amp_step;
-                let battery_ampere = (bat_amp_raw - battery_amp_offset) * amp_step;
+                let solar_ampere_ = (sol_amp_raw - solar_amp_offset) * amp_step * solar_amp_corr;
+                let battery_ampere_ = (bat_amp_raw - battery_amp_offset) * amp_step * battery_amp_corr;
 
-                if (solar_ampere < 1.0) solar_ampere = 0.0;
-                if (Math.abs(battery_ampere) < 1.0) battery_ampere = 0.0;
+                if (solar_ampere_ < ignore_amp) solar_ampere_ = 0.0;
+                if (Math.abs(battery_ampere_) < ignore_amp) battery_ampere_ = 0.0;
 
-                const solWh = (solar_voltage * solar_ampere) / 6.0;
-                const batWh = (battery_voltage * battery_ampere) / 6.0;
+                const solWh = (solar_voltage * solar_ampere_) / 6.0;
+                const batWh = (battery_voltage * battery_ampere_) / 6.0;
                 
                 const slotDate = new Date(Date.now() - (numSlots - 1 - i) * 10 * 60000);
                 const dateKey = slotDate.toLocaleDateString('de-DE'); 
@@ -663,13 +669,20 @@
             const dv = new DataView(globalLogBuffer);
             const numSlots = Math.floor(globalLogBuffer.byteLength / 5);
             
-            let solar_amp_offset = 1780;
-            let battery_amp_offset_offset = 0;
+            // Konfiguration laden
+            let solar_amp_offset = parseFloat(document.getElementById('c_sol_off').value) || 15000;
+            let battery_amp_offset_offset = parseFloat(document.getElementById('c_bat_off_diff').value) || 0;
+            const solar_amp_corr = parseFloat(document.getElementById('c_sol_corr').value) || 1.0;
+            const battery_amp_corr = parseFloat(document.getElementById('c_bat_corr').value) || 1.0;
+            const ignore_amp = parseFloat(document.getElementById('c_ign_amp').value) || 1.0;
             const amp_step = 0.0138718;
 
+            let battery_amp_offset = solar_amp_offset + battery_amp_offset_offset;
+
+            // Deutsches CSV Format: Semikolon als Trenner
             let csv = filtered 
-                ? "Datum,Zeit,Solar_Volt,Solar_Ampere,Solar_Watt,Batterie_Volt,Batterie_Ampere,Batterie_Watt\n"
-                : "Datum,Zeit,Solar_ADC_Volt,Solar_ADC_Amp,Batterie_ADC_Volt,Batterie_ADC_Amp\n";
+                ? "Datum;Zeit;Solar_Volt;Solar_Ampere;Batterie_Volt;Batterie_Ampere\n"
+                : "Datum;Zeit;Solar_ADC_Volt;Solar_ADC_Amp;Batterie_ADC_Volt;Batterie_ADC_Amp\n";
 
             const rows = [];
 
@@ -681,10 +694,13 @@
                 const b3 = dv.getUint8(offset + 3);
                 const b4 = dv.getUint8(offset + 4);
 
+                // --- Dekomprimierung ---
                 const sol_amp_comp = (b0 << 4) | (b1 >> 4);
                 const bat_amp_comp = ((b1 & 0x0F) << 8) | b2;
+                
                 const sol_volt_raw = ((b3 & 0x7F) << 8) | 128; 
                 const bat_volt_raw = (b4 * 48) + 20753;
+                
                 const sol_amp_raw = (sol_amp_comp << 1) + 15000;
                 const bat_amp_raw = bat_amp_comp << 3;
 
@@ -693,24 +709,30 @@
                 const tStr = slotDate.toLocaleTimeString('de-DE');
 
                 if (filtered) {
-                    const solar_voltage = sol_volt_raw * (40 / 32767.0);
-                    const battery_voltage = bat_volt_raw * (30 / 32767.0);
+                    // --- Konvertierung (1:1 aus C++) ---
+                    let solar_voltage = sol_volt_raw * (40 / 32767.0);
+                    let battery_voltage = bat_volt_raw * (30 / 32767.0);
 
-                    if (solar_voltage < 5.0) solar_amp_offset = (solar_amp_offset * 0.99) + (sol_amp_raw * 0.01);
-                    const battery_amp_offset = solar_amp_offset + battery_amp_offset_offset;
+                    if (solar_voltage < 5.0) {
+                        solar_amp_offset = (solar_amp_offset * 0.99) + (sol_amp_raw * 0.01);
+                        battery_amp_offset = solar_amp_offset + battery_amp_offset_offset;
+                    }
 
-                    let solar_ampere = (sol_amp_raw - solar_amp_offset) * amp_step;
-                    let battery_ampere = (bat_amp_raw - battery_amp_offset) * amp_step;
+                    let solar_ampere_ = (sol_amp_raw - solar_amp_offset) * amp_step * solar_amp_corr;
+                    let battery_ampere_ = (bat_amp_raw - battery_amp_offset) * amp_step * battery_amp_corr;
 
-                    if (solar_ampere < 1.0) solar_ampere = 0.0;
-                    if (Math.abs(battery_ampere) < 1.0) battery_ampere = 0.0;
+                    if (solar_ampere_ < ignore_amp) solar_ampere_ = 0.0;
+                    if (Math.abs(battery_ampere_) < ignore_amp) battery_ampere_ = 0.0;
 
-                    const solW = solar_voltage * solar_ampere;
-                    const batW = battery_voltage * battery_ampere;
+                    // Für deutsches Excel: Punkte durch Kommas ersetzen
+                    const sV = solar_voltage.toFixed(2).replace('.', ',');
+                    const sA = solar_ampere_.toFixed(2).replace('.', ',');
+                    const bV = battery_voltage.toFixed(2).replace('.', ',');
+                    const bA = battery_ampere_.toFixed(2).replace('.', ',');
 
-                    rows.push(`${dStr},${tStr},${solar_voltage.toFixed(2)},${solar_ampere.toFixed(2)},${solW.toFixed(2)},${battery_voltage.toFixed(2)},${battery_ampere.toFixed(2)},${batW.toFixed(2)}`);
+                    rows.push(`${dStr};${tStr};${sV};${sA};${bV};${bA}`);
                 } else {
-                    rows.push(`${dStr},${tStr},${sol_volt_raw},${sol_amp_raw},${bat_volt_raw},${bat_amp_raw}`);
+                    rows.push(`${dStr};${tStr};${sol_volt_raw};${sol_amp_raw};${bat_volt_raw};${bat_amp_raw}`);
                 }
             }
 
@@ -719,7 +741,7 @@
             const url = URL.createObjectURL(blob);
             const a = document.createElement("a");
             a.href = url;
-            a.download = filtered ? "solar_log_filtered.csv" : "solar_log_raw.csv";
+            a.download = filtered ? "solar_log_konvertiert.csv" : "solar_log_raw.csv";
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
