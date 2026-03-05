@@ -467,8 +467,8 @@
                 lucide.createIcons();
             }
 
-            // Inverter Animation - Läuft nur, wenn W > 5 UND der Inverter auch echte 220V ausgibt (inv_volt == 0)
-            if (inv_w > 5 && data.inv_volt === 0) {
+            // Inverter Animation - Läuft nur, wenn W > 5 UND der Inverter auch echte 230V ausgibt (inv_volt == 1)
+            if (inv_w > 5 && data.inv_volt === 1) {
                 pathInverter.classList.remove('paused');
                 pathInverter.style.animationDuration = Math.max(0.2, 2.0 - (inv_w / 500)) + 's';
             } else pathInverter.classList.add('paused');
@@ -480,15 +480,15 @@
             if (data.inv_relay === 0) {
                 txtRelay.innerText = "LOW (Aktiv)";
                 txtRelay.className = "font-mono font-medium text-green-500";
-                // 220V Logik (Active-LOW: 0 = 220V da, 1 = Keine Spannung)
-                invStatus.innerText = data.inv_volt === 0 ? "Online" : "Startet...";
-                invStatus.className = data.inv_volt === 0 ? "text-green-500" : "text-yellow-500";
+                // 230V Logik (Normal: 1 = 230V da, 0 = Keine Spannung)
+                invStatus.innerText = data.inv_volt === 1 ? "Online" : "Startet...";
+                invStatus.className = data.inv_volt === 1 ? "text-green-500" : "text-yellow-500";
             } else {
                 txtRelay.innerText = "HIGH (Getrennt)";
                 txtRelay.className = "font-mono font-medium text-red-500";
                 // Prüfen ob evtl. noch Restspannung anliegt, obwohl Relais schon getrennt hat
-                invStatus.innerText = data.inv_volt === 0 ? "Stoppt..." : "Offline";
-                invStatus.className = data.inv_volt === 0 ? "text-yellow-500" : "text-red-500";
+                invStatus.innerText = data.inv_volt === 1 ? "Stoppt..." : "Offline";
+                invStatus.className = data.inv_volt === 1 ? "text-yellow-500" : "text-red-500";
             }
 
             const now = new Date();
