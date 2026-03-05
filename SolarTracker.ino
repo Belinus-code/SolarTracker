@@ -169,6 +169,21 @@ void setup() {
     for(int i=0; i<144; i++) file.write((uint8_t*)&empty, sizeof(RingSlot));
     file.close();
   }
+  if (!LittleFS.exists("/totals.bin"))
+  {
+    File file = LittleFS.open("/totals.bin", "w");
+    TotalStats empty_stats = {0, 0, 0, 0};
+    file.write((uint8_t*)&empty_stats, sizeof(TotalStats));
+    file.close();
+    Serial.println("totals.bin neu erstellt");
+  }
+
+  if (!LittleFS.exists("/log.bin"))
+  {
+    File file = LittleFS.open("/log.bin", "w");
+    file.close();
+    Serial.println("log.bin neu erstellt (0 Bytes)");
+  }
   LoadRingBuffer();
   LoadTotals();
 
@@ -232,6 +247,7 @@ void setup() {
 
   server.on("/log.bin", HTTP_GET, []() {
     if (!LittleFS.exists("/log.bin")) {
+      Serial.println("log.bin gibs nicht");
       server.send(404, "text/plain", "log.bin existiert noch nicht.");
       return;
     }
@@ -242,6 +258,7 @@ void setup() {
 
   server.on("/ring.bin", HTTP_GET, []() {
     if (!LittleFS.exists("/ring.bin")) {
+      Serial.println("ring.bin gibs nicht");
       server.send(404, "text/plain", "ring.bin existiert noch nicht.");
       return;
     }
@@ -252,6 +269,7 @@ void setup() {
 
   server.on("/totals.bin", HTTP_GET, []() {
     if (!LittleFS.exists("/totals.bin")) {
+      Serial.println("totals.bin gibs nicht");
       server.send(404, "text/plain", "totals.bin existiert noch nicht.");
       return;
     }
@@ -326,6 +344,22 @@ void setup() {
       }
       file.close();
     }
+    if (!LittleFS.exists("/ring.bin"))
+    {
+      File file = LittleFS.open("/ring.bin", "w");
+      file.write(0);
+      RingSlot empty = {0, 0, 0, 0, 0, 0, 35.0f, 35.0f};
+      for(int i=0; i<144; i++) file.write((uint8_t*)&empty, sizeof(RingSlot));
+      file.close();
+
+      file = LittleFS.open("/totals.bin", "w");
+      TotalStats empty_stats = {0, 0, 0, 0};
+      file.write((uint8_t*)&empty_stats, sizeof(TotalStats));
+      file.close();
+
+      file = LittleFS.open("/log.bin", "w");
+      file.close();
+    }
 
     total_solar_wh = 0;
     total_battery_charge = 0;
@@ -379,10 +413,10 @@ void Sample()
   {
     last_sample += sample_cycle;
     // Replace with I2C Reading soon
-    int16_t sol_amp_buf = 0;
-    int16_t sol_volt_buf = 0;
-    int16_t bat_amp_buf = 0;
-    int16_t bat_volt_buf = 0;
+    int16_t sol_amp_buf = analogRead(solar_ampere_pin) * 8;
+    int16_t sol_volt_buf = analogRead(solar_voltage_pin) * 8;
+    int16_t bat_amp_buf = analogRead(battery_ampere_pin) * 8;
+    int16_t bat_volt_buf = analogRead(battery_voltage_pin) * 8;
 
     int16_t zero = 0;
 
@@ -585,7 +619,7 @@ void InverterControl()
 
 int SaveConfig()
 {
-  File config_file = LittleFS.open("config.bin", FILE_WRITE);
+  File config_file = LittleFS.open("/config.bin", FILE_WRITE);
   if(!config_file)return -1;
   int counter = 0;
   uint8_t buffer[CONFIG_FILE_SIZE];
@@ -620,7 +654,7 @@ int SaveConfig()
 
 int LoadConfig()
 {
-  File config_file = LittleFS.open("config.bin", FILE_READ);
+  File config_file = LittleFS.open("/config.bin", FILE_READ);
   if(!config_file)return -1;
   if(config_file.size() != CONFIG_FILE_SIZE)return -2;
   int counter = 0;
