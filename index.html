@@ -79,10 +79,10 @@
         <div id="view-live" class="space-y-6 animate-fade-in">
             <!-- Energiefluss Visualisierung -->
             <div class="relative bg-card rounded-2xl p-6 shadow-xl border border-gray-800/50 mt-2">
-                <svg class="absolute inset-0 w-full h-full pointer-events-none" style="z-index: 0;">
-                    <path d="M 50% 25% L 50% 50%" stroke="#fbbf24" stroke-width="3" fill="none" class="flow-path opacity-50" id="path-solar" />
-                    <path d="M 25% 75% L 50% 50%" stroke="#3b82f6" stroke-width="3" fill="none" class="flow-path opacity-50" id="path-battery" />
-                    <path d="M 50% 50% L 75% 75%" stroke="#ef4444" stroke-width="3" fill="none" class="flow-path opacity-50" id="path-inverter" />
+                <svg class="absolute inset-0 w-full h-full pointer-events-none" style="z-index: 0;" viewBox="0 0 100 100" preserveAspectRatio="none">
+                    <path d="M 50 25 L 50 50" stroke="#fbbf24" stroke-width="3" fill="none" class="flow-path opacity-50" id="path-solar" vector-effect="non-scaling-stroke" />
+                    <path d="M 25 75 L 50 50" stroke="#3b82f6" stroke-width="3" fill="none" class="flow-path opacity-50" id="path-battery" vector-effect="non-scaling-stroke" />
+                    <path d="M 50 50 L 75 75" stroke="#ef4444" stroke-width="3" fill="none" class="flow-path opacity-50" id="path-inverter" vector-effect="non-scaling-stroke" />
                 </svg>
 
                 <div class="grid grid-cols-2 gap-x-4 gap-y-12 relative z-10">
@@ -335,22 +335,23 @@
         Chart.defaults.borderColor = '#374151';
         Chart.defaults.font.family = "sans-serif";
 
-        let solarChartObj = null;
-        let batteryChartObj = null;
-        let voltageChartObj = null;
-        let longtermChartObj = null;
+        // Global State (als var deklariert, um Temporal Dead Zones zu verhindern)
+        var solarChartObj = null;
+        var batteryChartObj = null;
+        var voltageChartObj = null;
+        var longtermChartObj = null;
         
-        let historyLoaded = false;
-        let configLoaded = false;
-        let globalLogBuffer = null; 
+        var historyLoaded = false;
+        var configLoaded = false;
+        var globalLogBuffer = null; 
         
-        let configUnlocked = false; 
+        var configUnlocked = false; 
 
         // Versteckte System-Variablen
-        let hiddenConfig = { rel_ow_start: 0, rel_ow_act: 0 };
+        var hiddenConfig = { rel_ow_start: 0, rel_ow_act: 0 };
 
         // State
-        let lastLiveData = { sol_a: 0, bat_a: 0 };
+        var lastLiveData = { sol_a: 0, bat_a: 0 };
 
         // --- Utils ---
         function formatWh(wh) {
