@@ -388,6 +388,41 @@ void setup() {
     ESP.restart();
   });
 
+  auto serveAndLogFile = [](String path) {
+    Serial.printf("\n[WEB] >>> Anfrage empfangen für: %s\n", path.c_str());
+    
+    if (!LittleFS.exists(path)) {
+      Serial.printf("[WEB] !!! FEHLER: %s existiert nicht auf dem LittleFS!\n", path.c_str());
+      server.send(404, "text/plain", "File Not Found");
+      return;
+    }
+
+    File file = LittleFS.open(path, "r");
+    if (!file) {
+      Serial.printf("[WEB] !!! FEHLER: Konnte %s nicht oeffnen (Speicherfehler?)\n", path.c_str());
+      server.send(500, "text/plain", "Internal Server Error");
+      return;
+    }
+
+    size_t fileSize = file.size();
+    Serial.printf("[WEB] --- Datei gefunden. Groesse: %u Bytes. Starte Transfer...\n", fileSize);
+    
+    server.sendHeader("Cache-Control", "max-age=2592000, public");
+    // Datei senden (streamFile ist normalerweise blockierend, bis alles gesendet ist)
+    size_t sentBytes = server.streamFile(file, "application/javascript");
+    file.close();
+
+    if (sentBytes != fileSize) {
+      Serial.printf("[WEB] !!! ABBRUCH: Nur %u von %u Bytes gesendet (Verbindung getrennt?)\n", sentBytes, fileSize);
+    } else {
+      Serial.printf("[WEB] <<< ERFOLG: %s komplett gesendet (%u Bytes)\n", path.c_str(), sentBytes);
+    }
+  };
+
+  server.on("/tailwind.js", HTTP_GET, [serveAndLogFile]() { serveAndLogFile("/tailwind.js"); });
+  server.on("/lucide.js",   HTTP_GET, [serveAndLogFile]() { serveAndLogFile("/lucide.js"); });
+  server.on("/chart.js",    HTTP_GET, [serveAndLogFile]() { serveAndLogFile("/chart.js"); });
+
   server.serveStatic("/", LittleFS, "/");
   server.begin();
 }
