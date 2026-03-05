@@ -6,25 +6,27 @@
     <meta name="color-scheme" content="dark">
     <title>Solar Tracker</title>
     
+    <!-- LOKALE Bibliotheken laden -->
+    <script src="/tailwind.js"></script>
+    <script src="/lucide.js"></script>
+    <script src="/chart.js"></script>
+    
     <script>
-        // Tailwind Konfiguration muss VOR dem Laden der tailwind.js definiert werden
-        window.tailwind = {
-            config: {
-                darkMode: 'class',
-                theme: {
-                    extend: {
-                        colors: {
-                            dark: '#121212',
-                            card: '#1e1e1e',
-                            primary: '#10b981', 
-                            solar: '#fbbf24',   
-                            battery: '#3b82f6', 
-                            inverter: '#ef4444' 
-                        }
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        dark: '#121212',
+                        card: '#1e1e1e',
+                        primary: '#10b981', 
+                        solar: '#fbbf24',   
+                        battery: '#3b82f6', 
+                        inverter: '#ef4444' 
                     }
                 }
             }
-        };
+        }
     </script>
     <style type="text/tailwindcss">
         .flow-path {
@@ -51,14 +53,8 @@
 </head>
 <body class="bg-dark text-white font-sans antialiased min-h-screen flex flex-col">
 
-    <!-- Ladebildschirm (Verschwindet, wenn Bibliotheken da sind) -->
-    <div id="loader-screen" class="fixed inset-0 z-50 bg-dark flex flex-col items-center justify-center transition-opacity duration-500">
-        <div class="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mb-4"></div>
-        <p class="text-gray-400 font-mono text-sm" id="loader-text">Verbinde mit ESP32...</p>
-    </div>
-
     <!-- Header & Navigation -->
-    <header class="bg-card shadow-lg z-10 sticky top-0 opacity-0 transition-opacity duration-500" id="main-header">
+    <header class="bg-card shadow-lg z-10 sticky top-0">
         <div class="max-w-md mx-auto px-4 py-3 flex justify-between items-center">
             <h1 class="text-xl font-bold flex items-center gap-2">
                 <i data-lucide="sun" class="text-solar"></i>
@@ -77,7 +73,7 @@
     </header>
 
     <!-- Main Content Area -->
-    <main class="flex-1 max-w-md w-full mx-auto p-4 overflow-y-auto opacity-0 transition-opacity duration-500" id="main-content">
+    <main class="flex-1 max-w-md w-full mx-auto p-4 overflow-y-auto">
 
         <!-- ================= LIVE VIEW ================= -->
         <div id="view-live" class="space-y-6 animate-fade-in">
@@ -332,6 +328,13 @@
     </main>
 
     <script>
+        lucide.createIcons();
+
+        // Chart.js Globale Defaults
+        Chart.defaults.color = '#9ca3af';
+        Chart.defaults.borderColor = '#374151';
+        Chart.defaults.font.family = "sans-serif";
+
         let solarChartObj = null;
         let batteryChartObj = null;
         let voltageChartObj = null;
@@ -348,55 +351,6 @@
 
         // State
         let lastLiveData = { sol_a: 0, bat_a: 0 };
-
-        // =========================================================
-        // SEQUENZIELLER LADER FÜR ESP32 STABILITÄT
-        // =========================================================
-        window.addEventListener('load', async () => {
-            const statusText = document.getElementById('loader-text');
-            const files = ['/tailwind.js', '/lucide.js', '/chart.js'];
-            
-            for (let file of files) {
-                statusText.innerText = `Lade ${file} vom ESP32...`;
-                try {
-                    await new Promise((resolve, reject) => {
-                        let script = document.createElement('script');
-                        script.src = file;
-                        script.onload = resolve;
-                        script.onerror = () => reject(new Error(`Fehler bei ${file}`));
-                        document.head.appendChild(script);
-                    });
-                } catch (e) {
-                    alert(`KRITISCHER FEHLER: Konnte ${file} nicht vom ESP32 laden.\nUrsache: Datei fehlt auf LittleFS oder ESP32 ist überlastet.`);
-                    statusText.innerText = `Abbruch bei ${file}!`;
-                    statusText.classList.replace('text-gray-400', 'text-red-500');
-                    return; // Boot-Vorgang stoppen!
-                }
-            }
-
-            statusText.innerText = "Initialisiere Dashboard...";
-
-            // Alle Bibliotheken sind sicher da! Jetzt initialisieren wir:
-            if (typeof lucide !== 'undefined') lucide.createIcons();
-            if (typeof Chart !== 'undefined') {
-                Chart.defaults.color = '#9ca3af';
-                Chart.defaults.borderColor = '#374151';
-                Chart.defaults.font.family = "sans-serif";
-            }
-
-            // Ladebildschirm ausblenden, Dashboard einblenden
-            document.getElementById('loader-screen').classList.add('opacity-0');
-            setTimeout(() => {
-                document.getElementById('loader-screen').classList.add('hidden');
-                document.getElementById('main-header').classList.remove('opacity-0');
-                document.getElementById('main-content').classList.remove('opacity-0');
-                
-                // Dashboard starten
-                fetchLive();
-                setInterval(fetchLive, 1000);
-            }, 500);
-        });
-        // =========================================================
 
         // --- Utils ---
         function formatWh(wh) {
@@ -509,7 +463,7 @@
                     txtChargeState.innerText = "Entladen";
                     txtChargeState.className = "font-mono font-medium text-solar";
                 }
-                if (typeof lucide !== 'undefined') lucide.createIcons();
+                lucide.createIcons();
             }
 
             // Inverter Animation - Läuft nur, wenn W > 5 UND der Inverter auch echte 230V ausgibt (inv_volt == 1)
@@ -543,23 +497,21 @@
         // --- History Daten Laden & Parsen ---
         async function loadHistoryData() {
             try {
-                // Auch hier: Sequenzielles Laden, damit der ESP nicht abkackt
-                const resTotals = await fetch('/totals.bin');
-                if (!resTotals.ok) throw new Error("Konnte totals.bin nicht laden");
+                const [resTotals, resRing, resLog] = await Promise.all([
+                    fetch('/totals.bin'), 
+                    fetch('/ring.bin'),
+                    fetch('/log.bin')
+                ]);
+                
+                if (!resTotals.ok || !resRing.ok) throw new Error("Konnte Historien-Dateien nicht laden");
+                
                 const totalsBuffer = await resTotals.arrayBuffer();
-
-                const resRing = await fetch('/ring.bin');
-                if (!resRing.ok) throw new Error("Konnte ring.bin nicht laden");
                 const ringBuffer = await resRing.arrayBuffer();
-
+                
                 let logBuffer = null;
-                try {
-                    const resLog = await fetch('/log.bin');
-                    if (resLog.ok) {
-                        logBuffer = await resLog.arrayBuffer();
-                        globalLogBuffer = logBuffer; 
-                    }
-                } catch(e) { console.warn("Log Datei nicht vorhanden oder übersprungen"); }
+                if(resLog.ok) logBuffer = await resLog.arrayBuffer();
+
+                if (logBuffer) globalLogBuffer = logBuffer; 
 
                 parseAndRenderTotals(totalsBuffer);
                 parseAndRenderRing(ringBuffer);
@@ -1016,6 +968,10 @@
                 setTimeout(() => { btn.innerHTML = oldHtml; lucide.createIcons(); }, 2000);
             } catch (e) { alert("Fehler beim Senden"); }
         });
+
+        // Init Data Loop
+        fetchLive();
+        setInterval(fetchLive, 1000);
 
     </script>
 </body>
