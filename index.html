@@ -501,21 +501,23 @@
         // --- History Daten Laden & Parsen ---
         async function loadHistoryData() {
             try {
-                const [resTotals, resRing, resLog] = await Promise.all([
-                    fetch('/totals.bin'), 
-                    fetch('/ring.bin'),
-                    fetch('/log.bin')
-                ]);
-                
-                if (!resTotals.ok || !resRing.ok) throw new Error("Konnte Historien-Dateien nicht laden");
-                
+                // SEQUENTIELLES LADEN (Sicherer für ESP32 Hardware)
+                const resTotals = await fetch('/totals.bin');
+                if (!resTotals.ok) throw new Error("Konnte totals.bin nicht laden");
                 const totalsBuffer = await resTotals.arrayBuffer();
-                const ringBuffer = await resRing.arrayBuffer();
-                
-                let logBuffer = null;
-                if(resLog.ok) logBuffer = await resLog.arrayBuffer();
 
-                if (logBuffer) globalLogBuffer = logBuffer; 
+                const resRing = await fetch('/ring.bin');
+                if (!resRing.ok) throw new Error("Konnte ring.bin nicht laden");
+                const ringBuffer = await resRing.arrayBuffer();
+
+                let logBuffer = null;
+                try {
+                    const resLog = await fetch('/log.bin');
+                    if (resLog.ok) {
+                        logBuffer = await resLog.arrayBuffer();
+                        globalLogBuffer = logBuffer; 
+                    }
+                } catch(e) { console.warn("Optionaler log.bin Fetch fehlgeschlagen"); }
 
                 parseAndRenderTotals(totalsBuffer);
                 parseAndRenderRing(ringBuffer);
