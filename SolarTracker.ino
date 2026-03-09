@@ -3,15 +3,14 @@
 #include <WebServer.h>
 #include <DNSServer.h>
 
-#define CONFIG_FILE_SIZE 57
+#define CONFIG_FILE_SIZE 31
 // ----- Pin Definitions -----
 
-int solar_ampere_pin = 32;
-int solar_voltage_pin = 33;
-int battery_ampere_pin = 34;
-int battery_voltage_pin = 35;
-int inverter_voltage_pin = 21;
-int inverter_relay_pin = 23;
+int inverter_voltage_pin = 19;
+int inverter_relay_pin = 18;
+
+#define RXD2 16
+#define TXD2 17
 
 
 // ----- Timing Variables -----
@@ -20,7 +19,7 @@ uint32_t last_save = 0;
 uint32_t saving_cycle = 600000;  // Cycle to save Samples
 
 uint32_t last_sample = 0;
-uint32_t sample_cycle = 500;
+uint32_t sample_cycle = 1000;
 
 uint32_t last_inverter_online = 0;
 uint32_t inverter_off_duration = 10000;      // Duration after last online before relay
@@ -33,34 +32,59 @@ uint32_t relay_overwrite_duration = 5000;
 uint32_t last_unstable_bat = 0;
 
 
-// ----- Sample Thresholds -----
-
-float solar_night_voltage = 5.0;
-float battery_under_voltage = 20;
-
-uint16_t solar_amp_offset = 1780;
-uint16_t battery_amp_offset = 1780;
-int16_t battery_amp_offset_offset = 0;            // Offset to solar_amp_offset
-
-const float amp_step = 0.0138718;
-float solar_amp_corr = 1.0; 
-float battery_amp_corr = 1.0;
-float ignore_amp = 1.0;
-
-
 // ----- Sample Buffers -----
 
 float solar_voltage = 0;
 float solar_ampere = 0;
 float battery_voltage = 0;
 float battery_ampere = 0;
+int output_power = 0;
+int battery_percent = 0;
+
+struct QPIGS_Data {
+    // AC Netz-Eingang
+    float gridVoltage;           // AC-Eingangsspannung in V
+    float gridFrequency;         // AC-Eingangsfrequenz in Hz
+    
+    // AC Ausgang
+    float outputVoltage;         // AC-Ausgangsspannung in V
+    float outputFrequency;       // AC-Ausgangsfrequenz in Hz
+    uint16_t outputApparentPower;// AC-Ausgangsscheinleistung in VA
+    uint16_t outputActivePower;  // AC-Ausgangswirkleistung in W
+    uint8_t outputLoadPercent;   // Ausgangslast in Prozent
+    
+    // Interne Werte & Batterie
+    uint16_t busVoltage;         // Interne BUS-Spannung in V
+    float batteryVoltage;        // Batteriespannung in V
+    uint16_t batteryChargeCurrent; // Batterieladestrom in A
+    uint8_t batteryCapacity;     // Geschätzte Batteriekapazität in %
+    uint16_t inverterTemp;       // Temperatur des Kühlkörpers in °C
+    
+    // Solar (PV) Eingang
+    float pvInputCurrent;        // PV-Eingangsstrom in A
+    float pvInputVoltage;        // PV-Eingangsspannung in V
+    float sccBatteryVoltage;     // Batteriespannung vom SCC in V
+    uint16_t batteryDischargeCurrent; // Batterie-Entladestrom in A
+    
+    // Status Flags (aus Feld 17 extrahiert)
+    bool isSbuPriorityActive;    // SBU-Priorität aktiv
+    bool isConfigurationChanged; // Konfigurationsstatus geändert
+    bool isBusVoltageStable;     // BUS-Spannung stabil
+    bool isPvVoltageSufficient;  // PV-Spannung ausreichend für Ladung
+    bool isLineMode;             // Inverter-Status (Netzbetrieb = true)
+    bool isChargingOn;           // Lade-Status
+    bool isLoadOn;               // Last angeschlossen
+    bool hasWarning;             // Warnindikator
+    
+    uint16_t pvChargingPower;    // PV Ladeleistung in W
+};
 
 // ----- 10min Buffer -----
 
-int64_t acc_solar_amp_raw = 0;
-int64_t acc_solar_volt = 0;
-int64_t acc_battery_amp_raw = 0;
-int64_t acc_battery_volt = 0;
+double period_solar_amp = 0;
+double period_solar_volt = 0;
+double period_battery_amp = 0;
+double period_battery_volt = 0;
 
 uint16_t sample_counter = 0;
 
@@ -68,10 +92,8 @@ float period_solar_wh = 0;
 float period_battery_charge_wh = 0;
 float period_battery_discharge_wh = 0;
 float period_max_sol_amp = 0;
-float period_max_bat_discharge_amp = 0;
 float period_max_bat_volt = 0;
-float period_min_bat_volt = 35;
-float period_min_bat_volt_sunrise = 35;
+float period_bat_volt_sunrise = 35;
 
 // ----- Day Buffers -----
 
@@ -79,10 +101,8 @@ float ring_solar_wh[144];
 float ring_battery_charge_wh[144];
 float ring_battery_discharge_wh[144];
 float ring_max_sol_amp[144];
-float ring_max_bat_discharge_amp[144];
 float ring_max_bat_volt[144];
-float ring_min_bat_volt[144];
-float ring_min_bat_volt_sunrise[144];
+float ring_bat_volt_sunrise[144];
 uint8_t ring_buffer_counter = 0;
 
 struct RingSlot {
@@ -90,10 +110,9 @@ struct RingSlot {
     float bat_charge_wh;
     float bat_discharge_wh;
     float max_sol_amp;
-    float max_bat_dis_amp;
     float max_bat_volt;
     float min_bat_volt;
-    float min_bat_volt_sunrise;
+    float bat_volt_sunrise;
 };
 
 // ----- Total Stats -----
@@ -117,6 +136,12 @@ bool relay_overwrite_active = false;
 
 bool enable_logging = false;
 
+static const uint16_t crc_table[16] = {
+  0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50a5, 0x60c6, 0x70e7,
+  0x8108, 0x9129, 0xa14a, 0xb16b, 0xc18c, 0xd1ad, 0xe1ce, 0xf1ef
+};
+char responseBuffer[256];
+
 // ----- Objects -----
 
 DNSServer dnsServer;
@@ -125,6 +150,7 @@ File uploadFile;
 
 void setup() {
   Serial.begin(115200);
+  Serial2.begin(2400, SERIAL_8N1, RXD2, TXD2);
 
   pinMode(inverter_voltage_pin, INPUT);
   pinMode(inverter_relay_pin, OUTPUT);
@@ -155,17 +181,15 @@ void setup() {
     ring_battery_charge_wh[i] = 0.0;
     ring_battery_discharge_wh[i] = 0.0;
     ring_max_sol_amp[i] = 0.0;
-    ring_max_bat_discharge_amp[i] = 0.0;
     ring_max_bat_volt[i] = 0.0;
-    ring_min_bat_volt[i] = 35.0f;
-    ring_min_bat_volt_sunrise[i] = 35.0f;
+    ring_bat_volt_sunrise[i] = 35.0f;
   }
 
   if (!LittleFS.exists("/ring.bin"))
   {
     File file = LittleFS.open("/ring.bin", "w");
     file.write(0);
-    RingSlot empty = {0, 0, 0, 0, 0, 0, 35.0f, 35.0f};
+    RingSlot empty = {0, 0, 0, 0, 0, 35.0f};
     for(int i=0; i<144; i++) file.write((uint8_t*)&empty, sizeof(RingSlot));
     file.close();
   }
@@ -281,9 +305,9 @@ void setup() {
   server.on("/live", HTTP_GET, []() {
     char buf[200];
     snprintf(buf, sizeof(buf), 
-             "{\"sol_v\":%.2f,\"sol_a\":%.2f,\"bat_v\":%.2f,\"bat_a\":%.2f,\"inv_relay\":%d,\"inv_volt\":%d}",
+             "{\"sol_v\":%.2f,\"sol_a\":%.2f,\"bat_v\":%.2f,\"bat_a\":%.2f,\"out_pow\":%d,\"bat_per\":%d}",
              solar_voltage, solar_ampere, battery_voltage, battery_ampere, 
-             digitalRead(inverter_relay_pin), digitalRead(inverter_voltage_pin));
+             output_power, battery_percent;
     server.send(200, "application/json", buf);
   });
 
@@ -293,6 +317,7 @@ void setup() {
   });
 
   server.on("/config.bin", HTTP_GET, []() {
+    SaveConfig();
     if (!LittleFS.exists("/config.bin")) {
       server.send(404, "text/plain", "config.bin existiert nicht.");
       return;
@@ -338,20 +363,14 @@ void setup() {
     File file = LittleFS.open("/ring.bin", "w");
     if (file) {
       file.write(0);
-      RingSlot empty = {0, 0, 0, 0, 0, 0, 35.0f, 35.0f};
+      RingSlot empty = {0, 0, 0, 0, 0, 35.0f};
       for(int i = 0; i < 144; i++) {
         file.write((uint8_t*)&empty, sizeof(RingSlot));
       }
       file.close();
     }
-    if (!LittleFS.exists("/ring.bin"))
+    if (!LittleFS.exists("/totals.bin"))
     {
-      File file = LittleFS.open("/ring.bin", "w");
-      file.write(0);
-      RingSlot empty = {0, 0, 0, 0, 0, 0, 35.0f, 35.0f};
-      for(int i=0; i<144; i++) file.write((uint8_t*)&empty, sizeof(RingSlot));
-      file.close();
-
       file = LittleFS.open("/totals.bin", "w");
       TotalStats empty_stats = {0, 0, 0, 0};
       file.write((uint8_t*)&empty_stats, sizeof(TotalStats));
@@ -373,10 +392,8 @@ void setup() {
       ring_battery_charge_wh[i] = 0.0f;
       ring_battery_discharge_wh[i] = 0.0f;
       ring_max_sol_amp[i] = 0.0f;
-      ring_max_bat_discharge_amp[i] = 0.0f;
       ring_max_bat_volt[i] = 0.0f;
-      ring_min_bat_volt[i] = 35.0f;
-      ring_min_bat_volt_sunrise[i] = 35.0f;
+      ring_bat_volt_sunrise[i] = 35.0f;
     }
 
     server.send(200, "text/plain", "Alle Logs und Statistiken wurden erfolgreich gelöscht!");
@@ -447,67 +464,55 @@ void Sample()
   if(millis() - last_sample >= sample_cycle)
   {
     last_sample += sample_cycle;
-    // Replace with I2C Reading soon
-    int16_t sol_amp_buf = analogRead(solar_ampere_pin) * 8;
-    int16_t sol_volt_buf = analogRead(solar_voltage_pin) * 8;
-    int16_t bat_amp_buf = analogRead(battery_ampere_pin) * 8;
-    int16_t bat_volt_buf = analogRead(battery_voltage_pin) * 8;
+    // Replace with Serial Reading soon
+    if(!sendCommandAndWait("QPIGS", responseBuffer, 1000))
+    {
+      return;
+    }
+    QPIGS_Data response;
+    parseQPIGS(responseBuffer, response);
+    float batteryVoltage;        // Batteriespannung in V
+    uint16_t batteryChargeCurrent; // Batterieladestrom in A
+    uint8_t batteryCapacity;
+    float sol_amp_buf = response.pvInputCurrent;
+    float sol_volt_buf = response.pvInputVoltage;
+    float bat_amp_buf = (float)(response.batteryChargeCurrent) - (float)(response.batteryDischargeCurrent);
+    float bat_volt_buf = response.batteryVoltage;
 
-    int16_t zero = 0;
+    Serial.printf("SA: %f, SV: %f, BA: %f, BV: %f\n",
+              sol_amp_buf, sol_volt_buf,
+              bat_amp_buf, bat_volt_buf);
 
-    sol_amp_buf = max(zero, sol_amp_buf);
-    sol_volt_buf = max(zero, sol_volt_buf);
-    bat_amp_buf = max(zero, bat_amp_buf);
-    bat_volt_buf = max(zero, bat_volt_buf);
+    // Accumulating Logging Buffers
 
-    // Accumulating RAW Logging Buffers
-
-    acc_solar_amp_raw += sol_amp_buf;
-    acc_solar_volt += sol_volt_buf;
-    acc_battery_amp_raw += bat_amp_buf;
-    acc_battery_volt += bat_volt_buf;
+    period_solar_amp += sol_amp_buf;
+    period_solar_volt += sol_volt_buf;
+    period_battery_amp += bat_amp_buf;
+    period_battery_volt += bat_volt_buf;
     sample_counter ++;
 
     // Conversion of Raw-Data
 
-    solar_voltage = sol_volt_buf * (40 / 32767.0f);
-    battery_voltage = bat_volt_buf * (30 / 32767.0f);
+    solar_voltage = sol_volt_buf;
+    battery_voltage = bat_volt_buf;
 
-    if(solar_voltage < 5.0)
-    {
-      solar_amp_offset = (solar_amp_offset * 0.99f) + (sol_amp_buf * 0.01f);
-      battery_amp_offset = solar_amp_offset + battery_amp_offset_offset;
-    }
+    solar_ampere = sol_amp_buf;
+    battery_ampere = bat_amp_buf;
+    battery_percent = response.batteryCapacity;
+    output_power = response.outputActivePower;
 
-    float solar_ampere_ = (float)(sol_amp_buf - solar_amp_offset) * amp_step * solar_amp_corr;
-    float battery_ampere_ = (float)(bat_amp_buf - battery_amp_offset) * amp_step * battery_amp_corr;
-    if(solar_ampere_ < ignore_amp) solar_ampere_ = 0.0f;
-    if(abs(battery_ampere_) < ignore_amp) battery_ampere_ = 0.0f;
-
-    solar_ampere = (solar_ampere * 0.8f) + (solar_ampere_ * 0.2f);
-    battery_ampere = (battery_ampere * 0.8f) + (battery_ampere_ * 0.2f);
 
     // Analysis for Period Logging
 
     const float hours_per_sample = (float)sample_cycle / 3600000.0f;
-    period_solar_wh += solar_ampere_ * solar_voltage * hours_per_sample;
-    float batt_p_now = battery_ampere_ * battery_voltage * hours_per_sample;
-    if(battery_ampere_ >= 0)period_battery_charge_wh += batt_p_now;
+    period_solar_wh += solar_ampere * solar_voltage * hours_per_sample;
+    float batt_p_now = battery_ampere * battery_voltage * hours_per_sample;
+    if(battery_ampere >= 0)period_battery_charge_wh += batt_p_now;
     else period_battery_discharge_wh += abs(batt_p_now);
 
-
-    if(battery_ampere < -5.0f)
-    {
-      last_unstable_bat = millis();
-    }
-    else if(millis()-last_unstable_bat > 600000 && battery_voltage < period_min_bat_volt)
-    {
-      period_min_bat_volt = battery_voltage;
-    }
-    period_max_sol_amp = max(period_max_sol_amp, solar_ampere_);
-    period_max_bat_discharge_amp = max(period_max_bat_discharge_amp, abs(min(0.0f, battery_ampere_)));
+    period_max_sol_amp = max(period_max_sol_amp, solar_ampere);
     period_max_bat_volt = max(period_max_bat_volt, battery_voltage);
-    if(solar_voltage < 5.0f)period_min_bat_volt_sunrise = min(period_min_bat_volt_sunrise, battery_voltage);
+    if(solar_voltage < 5.0f)period_bat_volt_sunrise = min(period_bat_volt_sunrise, battery_voltage);
     total_uptime += sample_cycle;
   }
 }
@@ -518,35 +523,24 @@ void SaveSample()
   {
     // ----- Calculate Average -----
     last_save += saving_cycle;
-    uint16_t bat_amp = acc_battery_amp_raw / sample_counter;
-    uint16_t sol_amp = acc_solar_amp_raw / sample_counter;
-    uint16_t bat_volt = acc_battery_volt / sample_counter;
-    uint16_t sol_volt = acc_solar_volt / sample_counter;
+    float bat_amp = period_battery_amp / sample_counter;
+    float sol_amp = period_solar_amp / sample_counter;
+    float bat_volt = period_battery_volt / sample_counter;
+    float sol_volt = period_solar_volt / sample_counter;
+
+    bat_amp = constrain(bat_amp, -130.0f, 40.0f);
+    sol_volt = constrain(sol_volt, 0.0f, 40.0f);
+    sol_amp = constrain(sol_amp, 0.0f, 25.0f);
+    bat_volt = constrain(bat_volt, 19.0f, 30.0f);
     
     // ----- Compression for Raw-Logging -----
 
-    bat_amp = bat_amp >> 3;     // Shift for 12Bit Conversion, 15th bit is signed bit, can be ignored
-
-    if(sol_amp < 15000)sol_amp = 15000;
-    if(sol_amp > 23190)sol_amp = 23190;
-    sol_amp -= 15000;
-    sol_amp = sol_amp >> 1;
-
-    if(bat_volt < 20753) bat_volt = 20753;
-    bat_volt -= 20753;          // 19/30 * 2^15
-    bat_volt = bat_volt / 48;
-
-    sol_volt = sol_volt >> 8;
-    sol_volt = sol_volt & 0x7F;
-    sol_volt = sol_volt | (digitalRead(inverter_voltage_pin) << 7);
-
-    uint8_t buffer[5];
-    buffer[0] = (sol_amp >> 4) & 0xFF; 
-    buffer[1] = (sol_amp << 4) & 0xF0;
-    buffer[1] |= (bat_amp >> 8) & 0x0F;
-    buffer[2] = bat_amp & 0xFF;
-    buffer[3] = sol_volt & 0xFF;
-    buffer[4] = bat_volt & 0xFF;
+    uint8_t buffer[4];
+    buffer[0] = (uint8_t)((bat_amp + 130.0f) * (255.0f / 170.0f)); 
+    buffer[1] = (uint8_t)(sol_volt * (255.0f / 40.0f));
+    buffer[2] = (uint8_t)(sol_amp * (255.0f / 25.0f));
+    buffer[3] = (uint8_t)((bat_volt - 19.0f) * (127.0f / 11.0f)) & 0x7F;
+    if(digitalRead(inverter_voltage_pin))buffer[3] |= 0x80;
 
     if(enable_logging)
     { 
@@ -557,15 +551,15 @@ void SaveSample()
         return;
       }
       
-      file.write(buffer, 5);
+      file.write(buffer, 4);
       file.close();
     }
 
     sample_counter = 0;
-    acc_battery_amp_raw = 0;
-    acc_solar_amp_raw = 0;
-    acc_battery_volt = 0;
-    acc_solar_volt = 0;
+    period_battery_amp = 0;
+    period_solar_amp = 0;
+    period_battery_volt = 0;
+    period_solar_volt = 0;
 
     // Analysis for 24-Hour Stats
 
@@ -573,10 +567,8 @@ void SaveSample()
     ring_battery_charge_wh[ring_buffer_counter] = period_battery_charge_wh;
     ring_battery_discharge_wh[ring_buffer_counter] = period_battery_discharge_wh;
     ring_max_sol_amp[ring_buffer_counter] = period_max_sol_amp;
-    ring_max_bat_discharge_amp[ring_buffer_counter] = period_max_bat_discharge_amp;
     ring_max_bat_volt[ring_buffer_counter] = period_max_bat_volt;
-    ring_min_bat_volt[ring_buffer_counter] = period_min_bat_volt;
-    ring_min_bat_volt_sunrise[ring_buffer_counter] = period_min_bat_volt_sunrise;
+    ring_bat_volt_sunrise[ring_buffer_counter] = period_bat_volt_sunrise;
     ring_buffer_counter++;
     if(ring_buffer_counter >= 144)ring_buffer_counter = 0;
 
@@ -595,10 +587,8 @@ void SaveSample()
     period_battery_charge_wh = 0;
     period_battery_discharge_wh = 0;
     period_max_sol_amp = 0;
-    period_max_bat_discharge_amp = 0;
     period_max_bat_volt = 0;
-    period_min_bat_volt = 35;
-    period_min_bat_volt_sunrise = 35;
+    period_bat_volt_sunrise = 35;
   }
 }
 
@@ -627,7 +617,7 @@ void InverterControl()
       unsigned long off_time = now - last_inverter_online;
       if (off_time < inverter_off_duration)digitalWrite(inverter_relay_pin, LOW);
       else if(off_time < inverter_off_duration + inverter_relay_duration)digitalWrite(inverter_relay_pin, HIGH);
-      else if(cycle_inverter || solar_voltage > 30)
+      else if(cycle_inverter)
       {
         if((off_time - (inverter_off_duration + inverter_relay_duration)) % inverter_cycle_duration < inverter_cycle_duration - inverter_relay_duration)digitalWrite(inverter_relay_pin, LOW);
         else digitalWrite(inverter_relay_pin, HIGH);
@@ -667,22 +657,11 @@ int SaveConfig()
   memcpy(&buffer[RunningIndex(sizeof(relay_overwrite_start), counter)], &relay_overwrite_start, sizeof(relay_overwrite_start));
   memcpy(&buffer[RunningIndex(sizeof(relay_overwrite_duration), counter)], &relay_overwrite_duration, sizeof(relay_overwrite_duration));
 
-  memcpy(&buffer[RunningIndex(sizeof(solar_night_voltage), counter)], &solar_night_voltage, sizeof(solar_night_voltage));
-  memcpy(&buffer[RunningIndex(sizeof(battery_under_voltage), counter)], &battery_under_voltage, sizeof(battery_under_voltage));
-
-  memcpy(&buffer[RunningIndex(sizeof(solar_amp_offset), counter)], &solar_amp_offset, sizeof(solar_amp_offset));
-  memcpy(&buffer[RunningIndex(sizeof(battery_amp_offset), counter)], &battery_amp_offset, sizeof(battery_amp_offset));
-  memcpy(&buffer[RunningIndex(sizeof(battery_amp_offset_offset), counter)], &battery_amp_offset_offset, sizeof(battery_amp_offset_offset));
-
-  memcpy(&buffer[RunningIndex(sizeof(solar_amp_corr), counter)], &solar_amp_corr, sizeof(solar_amp_corr));
-  memcpy(&buffer[RunningIndex(sizeof(battery_amp_corr), counter)], &battery_amp_corr, sizeof(battery_amp_corr));
-  memcpy(&buffer[RunningIndex(sizeof(ignore_amp), counter)], &ignore_amp, sizeof(ignore_amp));
-
   memcpy(&buffer[RunningIndex(sizeof(cycle_inverter), counter)], &cycle_inverter, sizeof(cycle_inverter));
   memcpy(&buffer[RunningIndex(sizeof(relay_overwrite_active), counter)], &relay_overwrite_active, sizeof(relay_overwrite_active));
   memcpy(&buffer[RunningIndex(sizeof(enable_logging), counter)], &enable_logging, sizeof(enable_logging));
 
-  config_file.write(buffer, 57);
+  config_file.write(buffer, CONFIG_FILE_SIZE);
   config_file.close();
   return 0;
 }
@@ -704,17 +683,6 @@ int LoadConfig()
   memcpy(&inverter_relay_duration, &buffer[RunningIndex(sizeof(inverter_relay_duration), counter)], sizeof(inverter_relay_duration));
   memcpy(&relay_overwrite_start, &buffer[RunningIndex(sizeof(relay_overwrite_start), counter)], sizeof(relay_overwrite_start));
   memcpy(&relay_overwrite_duration, &buffer[RunningIndex(sizeof(relay_overwrite_duration), counter)], sizeof(relay_overwrite_duration));
-
-  memcpy(&solar_night_voltage, &buffer[RunningIndex(sizeof(solar_night_voltage), counter)], sizeof(solar_night_voltage));
-  memcpy(&battery_under_voltage, &buffer[RunningIndex(sizeof(battery_under_voltage), counter)], sizeof(battery_under_voltage));
-
-  memcpy(&solar_amp_offset, &buffer[RunningIndex(sizeof(solar_amp_offset), counter)], sizeof(solar_amp_offset));
-  memcpy(&battery_amp_offset, &buffer[RunningIndex(sizeof(battery_amp_offset), counter)], sizeof(battery_amp_offset));
-  memcpy(&battery_amp_offset_offset, &buffer[RunningIndex(sizeof(battery_amp_offset_offset), counter)], sizeof(battery_amp_offset_offset));
-
-  memcpy(&solar_amp_corr, &buffer[RunningIndex(sizeof(solar_amp_corr), counter)], sizeof(solar_amp_corr));
-  memcpy(&battery_amp_corr, &buffer[RunningIndex(sizeof(battery_amp_corr), counter)], sizeof(battery_amp_corr));
-  memcpy(&ignore_amp, &buffer[RunningIndex(sizeof(ignore_amp), counter)], sizeof(ignore_amp));
 
   memcpy(&cycle_inverter, &buffer[RunningIndex(sizeof(cycle_inverter), counter)], sizeof(cycle_inverter));
   memcpy(&relay_overwrite_active, &buffer[RunningIndex(sizeof(relay_overwrite_active), counter)], sizeof(relay_overwrite_active));
@@ -744,8 +712,8 @@ void SaveRingSlot(uint8_t index)
   RingSlot slot =
   {
     ring_solar_wh[index], ring_battery_charge_wh[index], ring_battery_discharge_wh[index],
-    ring_max_sol_amp[index], ring_max_bat_discharge_amp[index], ring_max_bat_volt[index],
-    ring_min_bat_volt[index], ring_min_bat_volt_sunrise[index]
+    ring_max_sol_amp[index], ring_max_bat_volt[index],
+    ring_bat_volt_sunrise[index]
   };
 
   file.write((uint8_t*)&slot, sizeof(RingSlot));
@@ -767,10 +735,8 @@ void LoadRingBuffer()
       ring_battery_charge_wh[i] = slot.bat_charge_wh;
       ring_battery_discharge_wh[i] = slot.bat_discharge_wh;
       ring_max_sol_amp[i] = slot.max_sol_amp;
-      ring_max_bat_discharge_amp[i] = slot.max_bat_dis_amp;
       ring_max_bat_volt[i] = slot.max_bat_volt;
-      ring_min_bat_volt[i] = slot.min_bat_volt;
-      ring_min_bat_volt_sunrise[i] = slot.min_bat_volt_sunrise;
+      ring_bat_volt_sunrise[i] = slot.bat_volt_sunrise;
     }
   }
   file.close();
@@ -797,4 +763,120 @@ void LoadTotals() {
         total_uptime = ts.uptime;
     }
     file.close();
+}
+
+uint16_t calculate_inverter_crc(const char* data, int length) {
+    uint16_t crc = 0x0000;
+    for (int i = 0; i < length; i++) {
+        uint8_t da = ((crc >> 8) >> 4);
+        crc <<= 4;
+        crc ^= crc_table[da ^ (data[i] >> 4)];
+        da = ((crc >> 8) >> 4);
+        crc <<= 4;
+        crc ^= crc_table[da ^ (data[i] & 0x0F)];
+    }
+    
+    uint8_t crc_low = crc & 0xFF;
+    uint8_t crc_high = (crc >> 8) & 0xFF;
+    
+    if (crc_low == 0x28 || crc_low == 0x0D || crc_low == 0x0A) crc_low++;
+    if (crc_high == 0x28 || crc_high == 0x0D || crc_high == 0x0A) crc_high++;
+    
+    return (uint16_t)((crc_high << 8) | crc_low);
+}
+
+bool sendCommandAndWait(const char* cmd, char* outBuffer, unsigned long timeoutMs) {
+    uint16_t sendCrc = calculate_inverter_crc(cmd, strlen(cmd));
+    Serial2.print(cmd);
+    Serial2.write((sendCrc >> 8) & 0xFF);
+    Serial2.write(sendCrc & 0xFF);
+    Serial2.write('\r');
+
+    unsigned long startTime = millis();
+    char tempBuffer[256];
+    int rxIndex = 0;
+    outBuffer[0] = '\0';
+
+    while ((millis() - startTime) < timeoutMs) {
+        
+        while (Serial2.available() > 0) {
+            char c = Serial2.read();
+            if (c == '\r') {
+                if (rxIndex < 2) {
+                    Serial.println("Fehler: Antwort zu kurz!");
+                    return false;
+                }
+
+                uint8_t crcHigh = tempBuffer[rxIndex - 2];
+                uint8_t crcLow  = tempBuffer[rxIndex - 1];
+                uint16_t receivedCrc = (crcHigh << 8) | crcLow;
+
+                tempBuffer[rxIndex - 2] = '\0';
+                int payloadLength = rxIndex - 2;
+                uint16_t calculatedCrc = calculate_inverter_crc(tempBuffer, payloadLength);
+
+                if (calculatedCrc == receivedCrc)
+                {
+                    strcpy(outBuffer, tempBuffer);
+                    return true; 
+                } else {
+                    Serial.println("Fehler: CRC der Antwort stimmt nicht!");
+                    return false;
+                }
+            }
+            else if (rxIndex < (sizeof(tempBuffer) - 1))tempBuffer[rxIndex++] = c;
+        }
+        delay(1); 
+    }
+    Serial.println("Fehler: Timeout beim Warten auf Inverter-Antwort!");
+    return false;
+}
+
+bool parseQPIGS(char* payload, QPIGS_Data& data) {
+  if (payload[0] == '(') {
+      payload++; 
+  }
+
+  int index = 0;
+  char* token = strtok(payload, " ");
+
+  while (token != NULL) {
+    switch (index) {
+      case 0:  data.gridVoltage = atof(token); break;           // Feld 1 
+      case 1:  data.gridFrequency = atof(token); break;         // Feld 2 
+      case 2:  data.outputVoltage = atof(token); break;         // Feld 3 
+      case 3:  data.outputFrequency = atof(token); break;       // Feld 4 
+      case 4:  data.outputApparentPower = atoi(token); break;   // Feld 5 
+      case 5:  data.outputActivePower = atoi(token); break;     // Feld 6 
+      case 6:  data.outputLoadPercent = atoi(token); break;     // Feld 7 
+      case 7:  data.busVoltage = atoi(token); break;            // Feld 8 
+      case 8:  data.batteryVoltage = atof(token); break;        // Feld 9 
+      case 9:  data.batteryChargeCurrent = atoi(token); break;  // Feld 10 
+      case 10: data.batteryCapacity = atoi(token); break;       // Feld 11 
+      case 11: data.inverterTemp = atoi(token); break;          // Feld 12 
+      case 12: data.pvInputCurrent = atof(token); break;        // Feld 13 
+      case 13: data.pvInputVoltage = atof(token); break;        // Feld 14 
+      case 14: data.sccBatteryVoltage = atof(token); break;     // Feld 15 
+      case 15: data.batteryDischargeCurrent = atoi(token); break;// Feld 16 
+      
+      case 16: // Feld 17: Die Status-Flags als Binär-String 
+        if (strlen(token) >= 8)
+        {
+          data.isSbuPriorityActive    = (token[0] == '1'); // Bit 7
+          data.isConfigurationChanged = (token[1] == '1'); // Bit 6
+          data.isBusVoltageStable     = (token[2] == '1'); // Bit 5
+          data.isPvVoltageSufficient  = (token[3] == '1'); // Bit 4
+          data.isLineMode             = (token[4] == '1'); // Bit 3
+          data.isChargingOn           = (token[5] == '1'); // Bit 2
+          data.isLoadOn               = (token[6] == '1'); // Bit 1
+          data.hasWarning             = (token[7] == '1'); // Bit 0
+        }
+        break;
+      case 19: data.pvChargingPower = atoi(token); break; // PV Ladeleistung in Watt
+    }
+      
+    token = strtok(NULL, " ");
+    index++;
+  }
+  return (index > 16); 
 }
