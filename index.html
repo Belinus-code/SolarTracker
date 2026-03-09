@@ -1,1000 +1,1207 @@
 <!DOCTYPE html>
-<html lang="de" class="dark">
+<html lang="de">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="color-scheme" content="dark">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Solar Tracker</title>
     
-    <!-- LOKALE Bibliotheken laden -->
-    <script src="/tailwind.js"></script>
-    <script src="/lucide.js"></script>
-    <script src="/chart.js"></script>
-    
+    <!-- Deine lokalen Skripte aus dem LittleFS -->
+    <script src="tailwind.js"></script>
+    <script src="lucide.js"></script>
+    <script src="charts.js"></script>
+
+    <!-- Fallback für die Vorschau -->
     <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    colors: {
-                        dark: '#121212',
-                        card: '#1e1e1e',
-                        primary: '#10b981', 
-                        solar: '#fbbf24',   
-                        battery: '#3b82f6', 
-                        inverter: '#ef4444' 
+        if (typeof tailwind === 'undefined') { document.write('<script src="https://cdn.tailwindcss.com"><\/script>'); }
+        if (typeof lucide === 'undefined') { document.write('<script src="https://unpkg.com/lucide@latest"><\/script>'); }
+        if (typeof Chart === 'undefined') { document.write('<script src="https://cdn.jsdelivr.net/npm/chart.js"><\/script>'); }
+    </script>
+
+    <script>
+        if (typeof tailwind !== 'undefined') {
+            tailwind.config = {
+                theme: {
+                    extend: {
+                        colors: {
+                            dark: '#0f172a',
+                            panel: '#1e293b',
+                            primary: '#3b82f6',
+                        }
                     }
                 }
             }
         }
     </script>
-    <style type="text/tailwindcss">
-        .flow-path {
-            stroke-dasharray: 6 6;
-            animation: flowAnimation 1s linear infinite;
-        }
-        .flow-reverse {
-            animation-direction: reverse;
-        }
-        @keyframes flowAnimation {
-            to { stroke-dashoffset: -12; }
-        }
-        .paused { animation-play-state: paused; }
-        ::-webkit-scrollbar { display: none; }
-        body { -ms-overflow-style: none; scrollbar-width: none; }
+    <style>
+        [x-cloak] { display: none !important; }
+        body { background-color: #0f172a; color: #f8fafc; }
+        .tab-active { border-bottom: 2px solid #3b82f6; color: #3b82f6; }
+        .tab-inactive { color: #94a3b8; border-bottom: 2px solid transparent; }
+        .tab-inactive:hover { color: #e2e8f0; border-bottom: 2px solid #475569; }
         
-        .config-input {
-            @apply w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-primary focus:bg-gray-700 transition-colors text-sm;
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        /* Animation für den Stromfluss */
+        .flow-forwards { stroke-dasharray: 8; animation: flow 1s linear infinite; }
+        .flow-backwards { stroke-dasharray: 8; animation: flow-reverse 1s linear infinite; }
+        .paused .flow-forwards, .paused .flow-backwards { animation-play-state: paused; opacity: 0.2; }
+        @keyframes flow { from { stroke-dashoffset: 16; } to { stroke-dashoffset: 0; } }
+        @keyframes flow-reverse { from { stroke-dashoffset: 0; } to { stroke-dashoffset: 16; } }
+
+        /* Layout Grid: Stern-Topologie */
+        .system-layout {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-areas: 
+                "solar solar"
+                "flow-sol flow-sol"
+                "hub hub"
+                "flow-bat flow-load"
+                "bat load";
+            gap: 0.5rem;
+            width: 100%;
         }
-        .config-label {
-            @apply block text-xs font-medium text-gray-400 mb-1;
+        
+        @media (min-width: 768px) {
+            .system-layout {
+                grid-template-columns: minmax(200px, 1fr) 60px 100px 60px minmax(200px, 1fr);
+                grid-template-areas: 
+                    "solar flow-sol hub flow-load load"
+                    ". . flow-bat . ."
+                    ". bat bat bat .";
+                gap: 1rem;
+                align-items: center;
+            }
+        }
+        @media (min-width: 1024px) {
+            .system-layout {
+                grid-template-columns: minmax(250px, 1fr) 80px 120px 80px minmax(250px, 1fr);
+            }
         }
     </style>
 </head>
-<body class="bg-dark text-white font-sans antialiased min-h-screen flex flex-col">
+<body class="font-sans antialiased min-h-screen flex flex-col">
 
     <!-- Header & Navigation -->
-    <header class="bg-card shadow-lg z-10 sticky top-0">
-        <div class="max-w-md mx-auto px-4 py-3 flex justify-between items-center">
-            <h1 class="text-xl font-bold flex items-center gap-2">
-                <i data-lucide="sun" class="text-solar"></i>
-                Solar Tracker
-            </h1>
-            <button id="toggleInverterBtn" class="bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors border border-gray-600 flex items-center gap-2">
-                <i data-lucide="power" class="w-4 h-4"></i> Relais
-            </button>
+    <header class="bg-panel shadow-lg border-b border-slate-700 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center h-16">
+                <div class="flex items-center gap-2 sm:gap-3">
+                    <div class="bg-primary/20 p-2 rounded-lg text-primary flex-shrink-0">
+                        <i data-lucide="sun-dim" class="w-5 h-5 sm:w-6 sm:h-6"></i>
+                    </div>
+                    <span class="font-bold text-lg sm:text-xl tracking-tight truncate">Solar Tracker</span>
+                </div>
+            </div>
+            
+            <nav class="flex space-x-4 sm:space-x-8 mt-2 overflow-x-auto no-scrollbar" aria-label="Tabs">
+                <button onclick="switchTab('live')" id="tab-btn-live" class="tab-active pb-3 px-1 text-sm font-medium flex items-center gap-2 transition-colors whitespace-nowrap">
+                    <i data-lucide="activity" class="w-4 h-4"></i> Live
+                </button>
+                <button onclick="switchTab('history')" id="tab-btn-history" class="tab-inactive pb-3 px-1 text-sm font-medium flex items-center gap-2 transition-colors whitespace-nowrap">
+                    <i data-lucide="bar-chart-2" class="w-4 h-4"></i> Historie
+                </button>
+                <button onclick="switchTab('settings')" id="tab-btn-settings" class="tab-inactive pb-3 px-1 text-sm font-medium flex items-center gap-2 transition-colors whitespace-nowrap">
+                    <i data-lucide="settings" class="w-4 h-4"></i> Einstellungen
+                </button>
+            </nav>
         </div>
-        
-        <nav class="flex border-t border-gray-800">
-            <button onclick="switchTab('live')" id="tab-live" class="flex-1 py-3 text-center border-b-2 border-primary text-primary font-medium transition-all">Live</button>
-            <button onclick="switchTab('history')" id="tab-history" class="flex-1 py-3 text-center border-b-2 border-transparent text-gray-400 hover:text-gray-200 transition-all">Historie</button>
-            <button onclick="switchTab('config')" id="tab-config" class="flex-1 py-3 text-center border-b-2 border-transparent text-gray-400 hover:text-gray-200 transition-all">Config</button>
-        </nav>
     </header>
 
     <!-- Main Content Area -->
-    <main class="flex-1 max-w-md w-full mx-auto p-4 overflow-y-auto">
-
-        <!-- ================= LIVE VIEW ================= -->
-        <div id="view-live" class="space-y-6 animate-fade-in">
-            <!-- Energiefluss Visualisierung -->
-            <div class="relative bg-card rounded-2xl p-6 shadow-xl border border-gray-800/50 mt-2">
-                <svg class="absolute inset-0 w-full h-full pointer-events-none" style="z-index: 0;" viewBox="0 0 100 100" preserveAspectRatio="none">
-                    <path d="M 50 25 L 50 50" stroke="#fbbf24" stroke-width="3" fill="none" class="flow-path opacity-50" id="path-solar" vector-effect="non-scaling-stroke" />
-                    <path d="M 25 75 L 50 50" stroke="#3b82f6" stroke-width="3" fill="none" class="flow-path opacity-50" id="path-battery" vector-effect="non-scaling-stroke" />
-                    <path d="M 50 50 L 75 75" stroke="#ef4444" stroke-width="3" fill="none" class="flow-path opacity-50" id="path-inverter" vector-effect="non-scaling-stroke" />
-                </svg>
-
-                <div class="grid grid-cols-2 gap-x-4 gap-y-12 relative z-10">
-                    <div class="col-span-2 flex justify-center">
-                        <div class="bg-dark/80 backdrop-blur-sm border border-solar/30 rounded-xl p-3 w-36 text-center shadow-[0_0_15px_rgba(251,191,36,0.1)]">
-                            <div class="text-solar flex justify-center mb-1"><i data-lucide="sun-dim"></i></div>
-                            <div class="text-xs text-gray-400 uppercase tracking-wider">Solar</div>
-                            <div class="text-xl font-bold mt-1" id="val-sol-w">0 W</div>
-                            <div class="text-xs text-gray-500 mt-1"><span id="val-sol-v">0.0</span>V &bull; <span id="val-sol-a">0.0</span>A</div>
-                        </div>
+    <main class="flex-1 max-w-7xl mx-auto px-2 sm:px-6 lg:px-8 py-8 w-full">
+        
+        <!-- ================= TAB: LIVE ================= -->
+        <div id="tab-live" class="space-y-6">
+            <div class="system-layout max-w-5xl mx-auto">
+                <!-- 1. SOLAR -->
+                <div style="grid-area: solar;" class="w-full bg-panel rounded-2xl p-4 md:p-6 border border-slate-700 shadow-xl relative overflow-hidden h-full">
+                    <div class="absolute top-0 right-0 p-4 opacity-10 text-yellow-400">
+                        <i data-lucide="sun" class="w-20 h-20 md:w-24 md:h-24"></i>
                     </div>
-                    <div class="flex justify-center">
-                        <div class="bg-dark/80 backdrop-blur-sm border border-battery/30 rounded-xl p-3 w-36 text-center shadow-[0_0_15px_rgba(59,130,246,0.1)]">
-                            <div class="text-battery flex justify-center mb-1"><i data-lucide="battery-charging" id="icon-battery"></i></div>
-                            <div class="text-xs text-gray-400 uppercase tracking-wider">Batterie</div>
-                            <div class="text-xl font-bold mt-1" id="val-bat-w">0 W</div>
-                            <div class="text-xs text-gray-500 mt-1"><span id="val-bat-v">0.0</span>V &bull; <span id="val-bat-a">0.0</span>A</div>
+                    <div class="relative z-10">
+                        <h2 class="text-slate-400 font-medium flex items-center gap-2 mb-2 md:mb-4 text-sm md:text-base">
+                            <i data-lucide="sun" class="w-4 h-4 md:w-5 md:h-5 text-yellow-400"></i> Solarzellen
+                        </h2>
+                        <div class="flex items-baseline gap-2">
+                            <span id="val-sol-pow" class="text-2xl md:text-4xl font-bold text-white">0</span>
+                            <span class="text-yellow-400 font-medium text-sm md:text-base">W</span>
                         </div>
-                    </div>
-                    <div class="flex justify-center">
-                        <div class="bg-dark/80 backdrop-blur-sm border border-inverter/30 rounded-xl p-3 w-36 text-center shadow-[0_0_15px_rgba(239,68,68,0.1)]">
-                            <div class="text-inverter flex justify-center mb-1"><i data-lucide="plug-zap"></i></div>
-                            <div class="text-xs text-gray-400 uppercase tracking-wider">Inverter</div>
-                            <div class="text-xl font-bold mt-1" id="val-inv-w">0 W</div>
-                            <div class="text-xs text-gray-500 mt-1"><span id="inv-status" class="text-green-500">Online</span></div>
+                        <div class="mt-4 grid grid-cols-1 xl:grid-cols-2 gap-2 text-xs md:text-sm bg-slate-800/50 p-2 md:p-3 rounded-lg border border-slate-700/50">
+                            <div class="flex justify-between xl:block">
+                                <span class="text-slate-500 uppercase tracking-wider">Volt</span>
+                                <span id="val-sol-v" class="font-mono text-slate-300">0.00 V</span>
+                            </div>
+                            <div class="flex justify-between xl:block">
+                                <span class="text-slate-500 uppercase tracking-wider">Ampere</span>
+                                <span id="val-sol-a" class="font-mono text-slate-300">0.00 A</span>
+                            </div>
                         </div>
                     </div>
                 </div>
-            </div>
 
-            <div class="bg-card rounded-2xl p-4 shadow-xl border border-gray-800/50">
-                <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">System Details</h3>
-                <div class="space-y-3">
-                    <div class="flex justify-between items-center py-2 border-b border-gray-800">
-                        <span class="text-gray-300 flex items-center gap-2"><i data-lucide="activity" class="w-4 h-4 text-primary"></i> Ladezustand</span>
-                        <span class="font-mono font-medium" id="txt-charge-state">Wartet...</span>
+                <!-- 2. FLOW SOLAR -> HUB -->
+                <div style="grid-area: flow-sol;" class="flex justify-center items-center w-full h-full py-1 md:py-0">
+                    <svg id="flow-sol-desk" class="hidden md:block w-full h-8 text-slate-600 paused transition-colors duration-500" viewBox="0 0 40 10" preserveAspectRatio="none">
+                        <line x1="5" y1="5" x2="33" y2="5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+                        <polygon points="31,1 39,5 31,9" fill="currentColor" />
+                    </svg>
+                    <svg id="flow-sol-mob" class="md:hidden h-8 w-8 text-slate-600 paused transition-colors duration-500" viewBox="0 0 10 40" preserveAspectRatio="none">
+                        <line x1="5" y1="5" x2="5" y2="33" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+                        <polygon points="1,31 5,39 9,31" fill="currentColor" />
+                    </svg>
+                </div>
+
+                <!-- 3. INVERTER HUB -->
+                <div style="grid-area: hub;" class="flex justify-center items-center relative py-2 md:py-0">
+                    <div class="w-16 h-16 md:w-24 md:h-24 rounded-full bg-slate-800 border-[3px] md:border-4 border-slate-700 flex flex-col items-center justify-center shadow-lg shadow-black/50 z-20">
+                        <i data-lucide="cpu" class="text-slate-400 w-6 h-6 md:w-10 md:h-10"></i>
+                        <span class="text-[9px] md:text-[11px] text-slate-500 font-bold mt-1 uppercase tracking-widest">Inverter</span>
                     </div>
-                    <div class="flex justify-between items-center py-2 border-b border-gray-800">
-                        <span class="text-gray-300 flex items-center gap-2"><i data-lucide="power" class="w-4 h-4 text-inverter"></i> Inverter Relais</span>
-                        <span class="font-mono font-medium" id="txt-relay-state">Wartet...</span>
+                    <!-- Status LED -->
+                    <div id="hub-active-dot" class="absolute top-2 right-1/2 translate-x-6 md:translate-x-10 w-3 h-3 md:w-4 md:h-4 rounded-full bg-slate-600 border border-slate-800 z-30 transition-colors duration-300"></div>
+                </div>
+
+                <!-- 4. FLOW HUB <-> BATTERY -->
+                <div style="grid-area: flow-bat;" class="flex justify-center items-center w-full h-full py-1 md:py-0">
+                    <svg id="flow-bat-desk" class="hidden md:block h-16 w-8 text-slate-600 paused transition-colors duration-500" viewBox="0 0 10 40" preserveAspectRatio="none">
+                        <line x1="5" y1="5" x2="5" y2="35" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+                        <polygon id="head-bat-down-desk" points="1,30 5,38 9,30" fill="currentColor" />
+                        <polygon id="head-bat-up-desk" points="1,10 5,2 9,10" fill="currentColor" class="hidden" />
+                    </svg>
+                    <svg id="flow-bat-mob" class="md:hidden h-10 w-8 text-slate-600 paused transition-colors duration-500" viewBox="0 0 10 40" preserveAspectRatio="none">
+                        <line x1="5" y1="5" x2="5" y2="35" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+                        <polygon id="head-bat-down-mob" points="1,30 5,38 9,30" fill="currentColor" />
+                        <polygon id="head-bat-up-mob" points="1,10 5,2 9,10" fill="currentColor" class="hidden" />
+                    </svg>
+                </div>
+
+                <!-- 5. BATTERY -->
+                <div style="grid-area: bat;" class="w-full max-w-sm mx-auto bg-panel rounded-2xl p-4 md:p-6 border border-slate-700 shadow-xl relative overflow-hidden h-full">
+                    <div class="absolute top-0 right-0 p-4 opacity-10 text-emerald-400">
+                        <i data-lucide="battery-charging" class="w-20 h-20 md:w-24 md:h-24"></i>
                     </div>
-                    <div class="flex justify-between items-center py-2">
-                        <span class="text-gray-300 flex items-center gap-2"><i data-lucide="clock" class="w-4 h-4 text-gray-400"></i> Letztes Update</span>
-                        <span class="font-mono text-sm text-gray-400" id="txt-last-update">--:--:--</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- ================= HISTORY VIEW ================= -->
-        <div id="view-history" class="hidden space-y-6 animate-fade-in">
-            
-            <div class="grid grid-cols-2 gap-3 mt-2">
-                <div class="bg-card rounded-xl p-4 border border-gray-800/50 shadow-lg">
-                    <div class="text-xs text-gray-400 flex items-center gap-1 mb-1"><i data-lucide="sun" class="w-3 h-3 text-solar"></i> Solar Gesamt</div>
-                    <div class="text-lg font-bold" id="tot-solar">--</div>
-                </div>
-                <div class="bg-card rounded-xl p-4 border border-gray-800/50 shadow-lg">
-                    <div class="text-xs text-gray-400 flex items-center gap-1 mb-1"><i data-lucide="battery-charging" class="w-3 h-3 text-battery"></i> Bat. Geladen</div>
-                    <div class="text-lg font-bold" id="tot-bat-in">--</div>
-                </div>
-                <div class="bg-card rounded-xl p-4 border border-gray-800/50 shadow-lg">
-                    <div class="text-xs text-gray-400 flex items-center gap-1 mb-1"><i data-lucide="battery" class="w-3 h-3 text-inverter"></i> Bat. Entladen</div>
-                    <div class="text-lg font-bold" id="tot-bat-out">--</div>
-                </div>
-                <div class="bg-card rounded-xl p-4 border border-gray-800/50 shadow-lg">
-                    <div class="text-xs text-gray-400 flex items-center gap-1 mb-1"><i data-lucide="clock" class="w-3 h-3 text-primary"></i> Laufzeit</div>
-                    <div class="text-lg font-bold" id="tot-uptime">--</div>
-                </div>
-            </div>
-
-            <!-- Chart 1: Solar -->
-            <div class="bg-card rounded-2xl p-4 shadow-xl border border-gray-800/50">
-                <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Solar Historie (Letzte 24h)</h3>
-                <div class="h-64 w-full relative">
-                    <canvas id="solarChart"></canvas>
-                </div>
-            </div>
-
-            <!-- Chart 2: Batterie Leistung & Strom -->
-            <div class="bg-card rounded-2xl p-4 shadow-xl border border-gray-800/50">
-                <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Batterie Strom & Leistung (Letzte 24h)</h3>
-                <div class="h-64 w-full relative">
-                    <canvas id="batteryChart"></canvas>
-                </div>
-            </div>
-
-            <!-- Chart 3: Batteriespannung -->
-            <div class="bg-card rounded-2xl p-4 shadow-xl border border-gray-800/50">
-                <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Batteriespannung (Letzte 24h)</h3>
-                <div class="h-56 w-full relative">
-                    <canvas id="voltageChart"></canvas>
-                </div>
-            </div>
-
-            <!-- Chart 4: Langzeit Log -->
-            <div class="bg-card rounded-2xl p-4 shadow-xl border border-gray-800/50">
-                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-3">
-                    <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-2">
-                        <span>Langzeit (Tagesertrag)</span>
-                        <span id="log-stats" class="text-xs text-primary font-mono bg-primary/10 px-2 py-1 rounded">Lade...</span>
-                    </h3>
-                    
-                    <!-- CSV Download Buttons -->
-                    <div class="flex gap-2">
-                        <button onclick="downloadLogCSV(false)" class="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded-lg border border-gray-600 flex items-center gap-1 transition-colors">
-                            <i data-lucide="download" class="w-3 h-3"></i> RAW CSV
-                        </button>
-                        <button onclick="downloadLogCSV(true)" class="text-xs bg-primary/20 text-primary hover:bg-primary/30 px-3 py-1.5 rounded-lg border border-primary/30 flex items-center gap-1 transition-colors">
-                            <i data-lucide="filter" class="w-3 h-3"></i> Filtered CSV
-                        </button>
-                    </div>
-                </div>
-                <div class="h-64 w-full relative">
-                    <canvas id="longtermChart"></canvas>
-                </div>
-            </div>
-
-        </div>
-
-        <!-- ================= CONFIG VIEW ================= -->
-        <div id="view-config" class="hidden animate-fade-in pb-24">
-            
-            <!-- LOGIN SCREEN FÜR CONFIG -->
-            <div id="config-login" class="bg-card rounded-2xl p-8 shadow-xl border border-gray-800/50 text-center max-w-sm mx-auto mt-10">
-                <i data-lucide="lock" class="w-12 h-12 text-primary mx-auto mb-4"></i>
-                <h2 class="text-xl font-bold mb-2">Gesperrter Bereich</h2>
-                <p class="text-gray-400 text-sm mb-6">Bitte gib das Administrator-Passwort ein, um die Einstellungen zu ändern.</p>
-                
-                <input type="password" id="login_pwd" placeholder="Passwort" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-primary focus:bg-gray-700 text-center mb-4 transition-colors">
-                
-                <button onclick="unlockConfig()" class="w-full bg-primary hover:bg-emerald-400 text-black py-3 rounded-lg font-bold shadow-lg transition-all flex items-center justify-center gap-2">
-                    <i data-lucide="unlock" class="w-5 h-5"></i> Entsperren
-                </button>
-            </div>
-
-            <!-- CONFIG INHALT (Versteckt bis Login) -->
-            <div id="config-content" class="hidden space-y-4 relative">
-                
-                <div class="bg-card rounded-2xl p-5 shadow-xl border border-gray-800/50 mt-2">
-                    <h2 class="text-lg font-bold mb-4 flex items-center gap-2"><i data-lucide="settings-2" class="text-primary"></i> Systemeinstellungen</h2>
-                    
-                    <form id="configForm" class="space-y-6">
+                    <div class="relative z-10">
+                        <div class="flex flex-col xl:flex-row xl:items-center justify-between gap-2 mb-2 md:mb-4">
+                            <h2 class="text-slate-400 font-medium flex items-center gap-2 text-sm md:text-base">
+                                <i data-lucide="battery" class="w-4 h-4 md:w-5 md:h-5 text-emerald-400"></i> Batterie
+                            </h2>
+                            <span id="bat-status-badge" class="self-start xl:self-auto text-[10px] md:text-xs font-semibold px-2 py-1 rounded-full bg-slate-700 text-slate-300 whitespace-nowrap">
+                                Wartend
+                            </span>
+                        </div>
                         
-                        <!-- Gruppe: Zeiten -->
-                        <div>
-                            <h3 class="text-primary text-sm font-bold border-b border-gray-800 pb-1 mb-3">Zyklen & Zeiten (ms)</h3>
-                            <div class="grid grid-cols-2 gap-3">
-                                <div><label class="config-label">Speicher Zyklus</label><input type="number" id="c_save_cyc" class="config-input"></div>
-                                <div><label class="config-label">Sample Zyklus</label><input type="number" id="c_samp_cyc" class="config-input"></div>
-                                <div><label class="config-label">Inverter Off Dauer</label><input type="number" id="c_inv_off_dur" class="config-input"></div>
-                                <div><label class="config-label">Inverter Zyklus</label><input type="number" id="c_inv_cyc_dur" class="config-input"></div>
-                                <div><label class="config-label">Relais Toggle (ms)</label><input type="number" id="c_inv_rel_dur" class="config-input"></div>
-                                <div><label class="config-label">Relais Overwrite (ms)</label><input type="number" id="c_rel_ow_dur" class="config-input"></div>
+                        <div class="flex justify-between items-end">
+                            <div class="flex items-baseline gap-1 md:gap-2">
+                                <span id="val-bat-pow" class="text-2xl md:text-4xl font-bold text-white">0</span>
+                                <span class="text-emerald-400 font-medium text-sm md:text-base">W</span>
+                            </div>
+                            <div class="text-right">
+                                <span id="val-bat-per" class="text-xl md:text-2xl font-bold text-white">0%</span>
                             </div>
                         </div>
-
-                        <!-- Gruppe: Spannungsschwellen -->
-                        <div>
-                            <h3 class="text-primary text-sm font-bold border-b border-gray-800 pb-1 mb-3">Schwellenwerte (Volt)</h3>
-                            <div class="grid grid-cols-2 gap-3">
-                                <div><label class="config-label">Solar Nacht Spannung</label><input type="number" step="0.1" id="c_sol_night_v" class="config-input"></div>
-                                <div><label class="config-label">Batterie Unterspannung</label><input type="number" step="0.1" id="c_bat_under_v" class="config-input"></div>
-                            </div>
+                        
+                        <div class="w-full bg-slate-800 rounded-full h-2 md:h-2.5 mt-3 mb-2">
+                            <div id="bat-progress" class="bg-emerald-500 h-2 md:h-2.5 rounded-full transition-all duration-500" style="width: 0%"></div>
                         </div>
 
-                        <!-- Gruppe: Ampere Kalibrierung -->
-                        <div>
-                            <h3 class="text-primary text-sm font-bold border-b border-gray-800 pb-1 mb-3">Ampere Auto-Kalibrierung & Offsets</h3>
-                            
-                            <!-- Auto Kalibrieren Tool -->
-                            <div class="bg-dark p-3 rounded-lg border border-gray-700 mb-4 space-y-3">
-                                <div class="text-xs text-gray-400">Lies den wahren Strom (A) am Inverter oder Multimeter ab und berechne den neuen Korrekturfaktor.</div>
-                                
-                                <div class="flex items-end gap-2">
-                                    <div class="flex-1">
-                                        <label class="config-label text-solar">Wahrer Solar Strom (A)</label>
-                                        <input type="number" step="0.01" id="cal_real_sol" placeholder="z.B. 5.5" class="config-input border-solar/50">
-                                    </div>
-                                    <button type="button" onclick="autoCalibrate('solar')" class="bg-solar text-black px-3 py-2 rounded-lg text-sm font-bold shadow hover:bg-yellow-500 transition-colors">Berechnen</button>
-                                </div>
-
-                                <div class="flex items-end gap-2 mt-2">
-                                    <div class="flex-1">
-                                        <label class="config-label text-battery">Wahrer Batterie Strom (A)</label>
-                                        <input type="number" step="0.01" id="cal_real_bat" placeholder="z.B. 10.2" class="config-input border-battery/50">
-                                    </div>
-                                    <button type="button" onclick="autoCalibrate('battery')" class="bg-battery text-white px-3 py-2 rounded-lg text-sm font-bold shadow hover:bg-blue-600 transition-colors">Berechnen</button>
-                                </div>
+                        <div class="mt-4 grid grid-cols-1 xl:grid-cols-2 gap-2 text-xs md:text-sm bg-slate-800/50 p-2 md:p-3 rounded-lg border border-slate-700/50">
+                            <div class="flex justify-between xl:block">
+                                <span class="text-slate-500 uppercase tracking-wider">Volt</span>
+                                <span id="val-bat-v" class="font-mono text-slate-300">0.00 V</span>
                             </div>
-
-                            <div class="grid grid-cols-2 gap-3">
-                                <div><label class="config-label">Solar Korrekturfaktor</label><input type="number" step="0.0001" id="c_sol_corr" class="config-input"></div>
-                                <div><label class="config-label">Batterie Korrekturfaktor</label><input type="number" step="0.0001" id="c_bat_corr" class="config-input"></div>
-                                
-                                <div><label class="config-label">Solar Amp Offset</label><input type="number" id="c_sol_off" class="config-input"></div>
-                                <div><label class="config-label">Batterie Amp Offset</label><input type="number" id="c_bat_off" class="config-input"></div>
-                                <div><label class="config-label">Bat. Offset Differenz</label><input type="number" id="c_bat_off_diff" class="config-input"></div>
-                                <div><label class="config-label">Ignore Amp (< A)</label><input type="number" step="0.1" id="c_ign_amp" class="config-input"></div>
+                            <div class="flex justify-between xl:block">
+                                <span class="text-slate-500 uppercase tracking-wider">Ampere</span>
+                                <span id="val-bat-a" class="font-mono text-slate-300">0.00 A</span>
                             </div>
                         </div>
-
-                        <!-- Gruppe: Schalter (Booleans) -->
-                        <div>
-                            <h3 class="text-primary text-sm font-bold border-b border-gray-800 pb-1 mb-3">System Schalter</h3>
-                            <div class="space-y-2">
-                                <label class="flex items-center gap-3 bg-dark p-2 rounded border border-gray-700">
-                                    <input type="checkbox" id="c_cyc_inv" class="w-5 h-5 text-primary rounded bg-gray-800 border-gray-600">
-                                    <span class="text-sm">Cycle Inverter in der Nacht</span>
-                                </label>
-                                <label class="flex items-center gap-3 bg-dark p-2 rounded border border-gray-700">
-                                    <input type="checkbox" id="c_en_log" class="w-5 h-5 text-primary rounded bg-gray-800 border-gray-600">
-                                    <span class="text-sm">Speichern/Logging aktivieren</span>
-                                </label>
-                            </div>
-                        </div>
-
-                    </form>
-                </div>
-
-                <!-- GEFAHREN ZONE -->
-                <div class="bg-red-950/20 border border-red-900/50 rounded-2xl p-5 shadow-xl mt-6">
-                    <h2 class="text-lg font-bold text-red-500 mb-4 flex items-center gap-2"><i data-lucide="alert-triangle"></i> Gefahrenzone</h2>
-                    <div class="flex gap-3">
-                        <button onclick="systemAction('reboot')" class="flex-1 bg-red-900/50 hover:bg-red-800/80 text-red-200 py-2 rounded-lg text-sm font-bold transition border border-red-700/50">ESP Neustart</button>
-                        <button onclick="systemAction('reset')" class="flex-1 bg-red-900/50 hover:bg-red-800/80 text-red-200 py-2 rounded-lg text-sm font-bold transition border border-red-700/50">Logs löschen</button>
                     </div>
                 </div>
 
-                <!-- Speichern Footer (Sticky) -->
-                <div class="fixed bottom-0 left-0 right-0 p-4 bg-card/95 backdrop-blur border-t border-gray-800 z-50">
-                    <div class="max-w-md mx-auto flex gap-3 items-center justify-end">
-                        <button onclick="saveConfig()" class="bg-primary hover:bg-emerald-400 text-black px-8 py-3 rounded-lg font-bold shadow-lg shadow-primary/20 transition-all flex items-center justify-center gap-2 w-full">
-                            <i data-lucide="save" class="w-5 h-5"></i> Einstellungen Speichern
+                <!-- 6. FLOW HUB -> LOAD -->
+                <div style="grid-area: flow-load;" class="flex justify-center items-center w-full h-full py-1 md:py-0">
+                    <svg id="flow-load-desk" class="hidden md:block w-full h-8 text-slate-600 paused transition-colors duration-500" viewBox="0 0 40 10" preserveAspectRatio="none">
+                        <line x1="5" y1="5" x2="33" y2="5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+                        <polygon points="31,1 39,5 31,9" fill="currentColor" />
+                    </svg>
+                    <svg id="flow-load-mob" class="md:hidden h-10 w-8 text-slate-600 paused transition-colors duration-500" viewBox="0 0 10 40" preserveAspectRatio="none">
+                        <line x1="5" y1="5" x2="5" y2="33" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+                        <polygon points="1,31 5,39 9,31" fill="currentColor" />
+                    </svg>
+                </div>
+
+                <!-- 7. LOAD -->
+                <div style="grid-area: load;" class="w-full bg-panel rounded-2xl p-4 md:p-6 border border-slate-700 shadow-xl relative overflow-hidden h-full">
+                    <div class="absolute top-0 right-0 p-4 opacity-10 text-blue-400">
+                        <i data-lucide="plug" class="w-20 h-20 md:w-24 md:h-24"></i>
+                    </div>
+                    <div class="relative z-10 h-full flex flex-col justify-between">
+                        <div>
+                            <h2 class="text-slate-400 font-medium flex items-center gap-2 mb-2 md:mb-4 text-sm md:text-base">
+                                <i data-lucide="home" class="w-4 h-4 md:w-5 md:h-5 text-blue-400"></i> Haus (Load)
+                            </h2>
+                            <div class="flex items-baseline gap-2 mt-2">
+                                <span id="val-out-pow" class="text-3xl md:text-5xl font-bold text-white">0</span>
+                                <span class="text-blue-400 font-medium text-base md:text-xl">W</span>
+                            </div>
+                        </div>
+                        <div class="mt-4 text-xs md:text-sm text-slate-500">
+                            <p>Aktuelle Leistungsabgabe an das Hausnetz.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Connection Status -->
+            <div class="flex items-center gap-2 text-sm text-slate-500 justify-end mt-4">
+                <div id="status-dot" class="w-2 h-2 rounded-full bg-slate-500"></div>
+                <span id="status-text">Warte auf Daten...</span>
+            </div>
+        </div>
+
+        <!-- ================= TAB: HISTORIE ================= -->
+        <div id="tab-history" class="hidden space-y-6">
+            
+            <!-- Gesamtdaten (Totals) -->
+            <div class="bg-panel rounded-2xl p-6 border border-slate-700 shadow-xl">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-xl font-bold flex items-center gap-2">
+                        <i data-lucide="database" class="w-5 h-5 text-primary"></i> Gesamtdaten (Lifetime)
+                    </h2>
+                    <span id="hist-loading-totals" class="text-xs text-slate-400 hidden"><i data-lucide="loader" class="w-3 h-3 animate-spin inline"></i> Lade...</span>
+                </div>
+                
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
+                        <span class="text-slate-500 text-xs uppercase tracking-wider block mb-1">Solar Ertrag</span>
+                        <div class="flex items-baseline gap-1">
+                            <span id="tot-solar" class="text-2xl font-bold text-yellow-400">0</span>
+                            <span id="tot-solar-unit" class="text-slate-400 text-sm">Wh</span>
+                        </div>
+                    </div>
+                    <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
+                        <span class="text-slate-500 text-xs uppercase tracking-wider block mb-1">Bat Ladung</span>
+                        <div class="flex items-baseline gap-1">
+                            <span id="tot-charge" class="text-2xl font-bold text-emerald-400">0</span>
+                            <span id="tot-charge-unit" class="text-slate-400 text-sm">Wh</span>
+                        </div>
+                    </div>
+                    <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
+                        <span class="text-slate-500 text-xs uppercase tracking-wider block mb-1">Bat Entladung</span>
+                        <div class="flex items-baseline gap-1">
+                            <span id="tot-discharge" class="text-2xl font-bold text-orange-400">0</span>
+                            <span id="tot-discharge-unit" class="text-slate-400 text-sm">Wh</span>
+                        </div>
+                    </div>
+                    <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
+                        <span class="text-slate-500 text-xs uppercase tracking-wider block mb-1">Laufzeit</span>
+                        <div class="flex items-baseline gap-1">
+                            <span id="tot-uptime" class="text-xl font-bold text-blue-400">0T 0h 0m</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 24h Ringbuffer Chart -->
+            <div class="bg-panel rounded-2xl p-6 border border-slate-700 shadow-xl">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-xl font-bold flex items-center gap-2">
+                        <i data-lucide="bar-chart-2" class="w-5 h-5 text-primary"></i> Leistungsverlauf (Letzte 24h)
+                    </h2>
+                    <span id="hist-loading-ring" class="text-xs text-slate-400 hidden"><i data-lucide="loader" class="w-3 h-3 animate-spin inline"></i> Lade...</span>
+                </div>
+                
+                <div class="w-full h-72 md:h-96 relative">
+                    <canvas id="historyChart"></canvas>
+                </div>
+            </div>
+
+            <!-- 24h Highlights (Max/Min) -->
+            <div class="bg-panel rounded-2xl p-6 border border-slate-700 shadow-xl">
+                <h2 class="text-xl font-bold mb-4 flex items-center gap-2">
+                    <i data-lucide="star" class="w-5 h-5 text-primary"></i> 24h Highlights
+                </h2>
+                
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div class="flex items-center gap-3 bg-slate-800/50 p-3 rounded-lg border border-slate-700">
+                        <div class="p-2 bg-yellow-500/20 text-yellow-400 rounded-lg"><i data-lucide="zap" class="w-5 h-5"></i></div>
+                        <div>
+                            <span class="text-slate-500 text-[10px] uppercase block">Max Solar Strom</span>
+                            <span id="ring-max-amp" class="font-bold text-lg text-white">0.0 A</span>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-3 bg-slate-800/50 p-3 rounded-lg border border-slate-700">
+                        <div class="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg"><i data-lucide="arrow-up-circle" class="w-5 h-5"></i></div>
+                        <div>
+                            <span class="text-slate-500 text-[10px] uppercase block">Max Bat Spannung</span>
+                            <span id="ring-max-volt" class="font-bold text-lg text-white">0.0 V</span>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-3 bg-slate-800/50 p-3 rounded-lg border border-slate-700">
+                        <div class="p-2 bg-blue-500/20 text-blue-400 rounded-lg"><i data-lucide="sunrise" class="w-5 h-5"></i></div>
+                        <div>
+                            <span class="text-slate-500 text-[10px] uppercase block">Spannung bei Sunrise</span>
+                            <span id="ring-min-sunrise" class="font-bold text-lg text-white">-</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Langzeitdaten (log.bin) -->
+            <div class="bg-panel rounded-2xl p-6 border border-slate-700 shadow-xl mt-6">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-xl font-bold flex items-center gap-2">
+                        <i data-lucide="history" class="w-5 h-5 text-primary"></i> Langzeitaufzeichnung
+                    </h2>
+                    <div class="flex items-center gap-4">
+                        <span id="hist-loading-log" class="text-xs text-slate-400 hidden"><i data-lucide="loader" class="w-3 h-3 animate-spin inline"></i> Lade...</span>
+                        <button onclick="downloadCSV()" id="btn-csv" class="bg-slate-700 hover:bg-primary text-white px-3 py-1.5 rounded-lg text-sm flex items-center gap-2 transition-colors hidden font-medium">
+                            <i data-lucide="download" class="w-4 h-4"></i> CSV Export
                         </button>
                     </div>
                 </div>
+                
+                <div class="space-y-6">
+                    <!-- Chart 1: Spannungen -->
+                    <div class="bg-slate-800/30 p-4 rounded-xl border border-slate-700/50">
+                        <h3 class="text-sm text-slate-400 mb-2 font-medium">Spannungen & Inverter-Status</h3>
+                        <div class="w-full h-64 relative">
+                            <canvas id="logVoltChart"></canvas>
+                        </div>
+                    </div>
+                    <!-- Chart 2: Ströme -->
+                    <div class="bg-slate-800/30 p-4 rounded-xl border border-slate-700/50">
+                        <h3 class="text-sm text-slate-400 mb-2 font-medium">Ströme (Laden / Entladen)</h3>
+                        <div class="w-full h-64 relative">
+                            <canvas id="logAmpChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
             
-            </div> <!-- Ende Config Content -->
+        </div>
 
-        </div> <!-- Ende Config View -->
+        <!-- ================= TAB: EINSTELLUNGEN ================= -->
+        <div id="tab-settings" class="hidden space-y-6">
+            
+            <!-- Login Ansicht -->
+            <div id="settings-login" class="bg-panel rounded-2xl p-6 border border-slate-700 shadow-xl max-w-sm mx-auto text-center mt-10">
+                <div class="inline-flex p-4 bg-slate-800 rounded-full text-slate-400 mb-4">
+                    <i data-lucide="lock" class="w-8 h-8"></i>
+                </div>
+                <h2 class="text-xl font-bold mb-2">Einstellungen gesperrt</h2>
+                <p class="text-sm text-slate-400 mb-6">Bitte Passwort eingeben, um fortzufahren.</p>
+                
+                <form onsubmit="checkPassword(event)" class="flex flex-col gap-3">
+                    <input type="password" id="settings-pw" placeholder="Passwort" class="w-full bg-dark border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-primary text-center">
+                    <p id="pw-error" class="text-red-400 text-xs hidden">Falsches Passwort!</p>
+                    <button type="submit" class="w-full bg-primary hover:bg-blue-600 text-white font-medium py-3 rounded-lg transition-colors">Entsperren</button>
+                </form>
+            </div>
+
+            <!-- Einstellungen Inhalt (Standardmäßig versteckt) -->
+            <div id="settings-content" class="bg-panel rounded-2xl p-6 border border-slate-700 shadow-xl max-w-2xl mx-auto hidden">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-xl font-bold">Systemeinstellungen</h2>
+                    <button onclick="lockSettings()" class="text-slate-400 hover:text-white text-sm flex items-center gap-1 transition-colors">
+                        <i data-lucide="lock" class="w-4 h-4"></i> Sperren
+                    </button>
+                </div>
+                
+                <div class="space-y-4">
+                    <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700">
+                        <h3 class="font-medium text-slate-300 mb-2">Netzwerk Info</h3>
+                        <div class="text-sm text-slate-400 space-y-1">
+                            <p>Domain: <span class="text-white font-mono">solar.tracker</span></p>
+                            <p>Verbindung: <span class="text-white">Lokales WLAN (Access Point / Station)</span></p>
+                        </div>
+                    </div>
+                    
+                    <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700 mt-4">
+                        <h3 class="font-medium text-slate-300 mb-2 flex items-center gap-2">
+                            <i data-lucide="cpu" class="w-4 h-4 text-primary"></i> System & Gerätesteuerung
+                        </h3>
+                        <p class="text-sm text-slate-400 mb-4">Steuerung des Inverters, Neustart des Systems und Verwaltung der Daten.</p>
+                        
+                        <div class="flex flex-col sm:flex-row flex-wrap gap-3">
+                            <button onclick="toggleInverter()" id="btn-toggle" class="bg-slate-700 hover:bg-slate-600 border border-slate-600 px-4 py-2 rounded-lg flex items-center justify-center gap-2 transition-colors font-medium text-sm flex-1">
+                                <i data-lucide="power" class="w-4 h-4"></i> Inverter Toggle
+                            </button>
+                            <button onclick="rebootESP()" id="btn-reboot" class="bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 border border-orange-500/30 px-4 py-2 rounded-lg flex items-center justify-center gap-2 transition-colors font-medium text-sm flex-1">
+                                <i data-lucide="refresh-cw" class="w-4 h-4"></i> ESP32 Neustart
+                            </button>
+                            <button onclick="showResetModal()" id="btn-reset" class="bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/30 px-4 py-2 rounded-lg flex items-center justify-center gap-2 transition-colors font-medium text-sm flex-1">
+                                <i data-lucide="trash-2" class="w-4 h-4"></i> Logs löschen
+                            </button>
+                        </div>
+                        <div id="system-msg" class="text-sm font-medium mt-3 hidden transition-opacity text-center"></div>
+                    </div>
+                    
+                    <!-- Konfigurationswerte -->
+                    <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700 mt-4">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="font-medium text-slate-300 flex items-center gap-2">
+                                <i data-lucide="sliders" class="w-4 h-4 text-primary"></i> Parameter (in Millisekunden)
+                            </h3>
+                            <button onclick="saveConfig()" id="btn-save-config" class="bg-primary hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm flex items-center gap-2 transition-colors font-medium">
+                                <i data-lucide="save" class="w-4 h-4"></i> Speichern
+                            </button>
+                        </div>
+                        
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <!-- Logging & Cycle -->
+                            <div class="space-y-3">
+                                <label class="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                                    <input type="checkbox" id="conf_enable_logging" class="rounded border-slate-600 bg-dark text-primary focus:ring-primary w-4 h-4">
+                                    Logging aktivieren
+                                </label>
+                                <div>
+                                    <label class="block text-xs text-slate-500 mb-1">Sample Cycle (ms)</label>
+                                    <input type="number" id="conf_sample_cycle" class="w-full bg-dark border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-slate-500 mb-1">Saving Cycle (ms)</label>
+                                    <input type="number" id="conf_saving_cycle" class="w-full bg-dark border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                                </div>
+                            </div>
+                            
+                            <!-- Inverter Cycle / Ausfall -->
+                            <div class="space-y-3">
+                                <label class="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                                    <input type="checkbox" id="conf_cycle_inverter" class="rounded border-slate-600 bg-dark text-primary focus:ring-primary w-4 h-4">
+                                    Wiederholter Inverter-Neustart im Zyklus (bei 220V Ausfall)
+                                </label>
+                                <div>
+                                    <label class="block text-xs text-slate-500 mb-1">Inverter Cycle Duration (ms)</label>
+                                    <input type="number" id="conf_inverter_cycle" class="w-full bg-dark border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                                </div>
+                                <div class="grid grid-cols-2 gap-2">
+                                    <div>
+                                        <label class="block text-xs text-slate-500 mb-1">Off Dur. (ms)</label>
+                                        <input type="number" id="conf_inverter_off" class="w-full bg-dark border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs text-slate-500 mb-1">Relay Dur. (ms)</label>
+                                        <input type="number" id="conf_inverter_relay" class="w-full bg-dark border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Relay Overwrite -->
+                            <div class="space-y-3 md:col-span-2 mt-2 pt-4 border-t border-slate-700/50">
+                                <h4 class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Relais Overwrite</h4>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-xs text-slate-500 mb-1">Overwrite Duration (ms)</label>
+                                        <input type="number" id="conf_relay_dur" class="w-full bg-dark border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+
+        <!-- Custom Confirm Modal (Versteckt) -->
+        <div id="confirm-modal" class="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
+            <div class="bg-panel border border-slate-700 rounded-2xl p-6 max-w-sm w-full mx-4 shadow-2xl transform scale-95 transition-transform duration-300" id="confirm-modal-box">
+                <div class="flex items-center gap-3 text-red-400 mb-4">
+                    <div class="p-2 bg-red-500/10 rounded-full"><i data-lucide="alert-triangle" class="w-6 h-6"></i></div>
+                    <h3 class="text-lg font-bold">Logs wirklich löschen?</h3>
+                </div>
+                <p class="text-sm text-slate-300 mb-6">Bist du sicher? Alle historischen Aufzeichnungen und Statistiken (log.bin, totals.bin, ring.bin) werden unwiderruflich vom ESP32 gelöscht!</p>
+                <div class="flex justify-end gap-3">
+                    <button onclick="hideResetModal()" class="px-4 py-2 rounded-lg text-sm font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 transition-colors">Abbrechen</button>
+                    <button onclick="resetLogs()" id="btn-confirm-reset" class="px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-500 transition-colors flex items-center gap-2">
+                        <i data-lucide="trash-2" class="w-4 h-4"></i> Ja, löschen
+                    </button>
+                </div>
+            </div>
+        </div>
 
     </main>
 
     <script>
-        lucide.createIcons();
+        if (typeof lucide !== 'undefined') { lucide.createIcons(); }
 
-        // Chart.js Globale Defaults
-        Chart.defaults.color = '#9ca3af';
-        Chart.defaults.borderColor = '#374151';
-        Chart.defaults.font.family = "sans-serif";
-
-        // Global State (als var deklariert, um Temporal Dead Zones zu verhindern)
-        var solarChartObj = null;
-        var batteryChartObj = null;
-        var voltageChartObj = null;
-        var longtermChartObj = null;
+        let historyChartInstance = null;
+        let logChartVoltInstance = null;
+        let logChartAmpInstance = null;
+        let isHistoryLoaded = false;
         
-        var historyLoaded = false;
-        var configLoaded = false;
-        var globalLogBuffer = null; 
+        // Globale Speicherung der Langzeitdaten für den CSV Export
+        let globalLogData = null;
         
-        var configUnlocked = false; 
+        // Auth Status speichern (bleibt für die Browser-Sitzung erhalten)
+        let isSettingsUnlocked = sessionStorage.getItem('solar_auth') === 'true';
+        let isConfigLoaded = false;
 
-        // Versteckte System-Variablen
-        var hiddenConfig = { rel_ow_start: 0, rel_ow_act: 0 };
-
-        // State
-        var lastLiveData = { sol_a: 0, bat_a: 0 };
-
-        // --- Utils ---
-        function formatWh(wh) {
-            if (wh >= 1000) return (wh / 1000).toFixed(2) + ' kWh';
-            return wh.toFixed(0) + ' Wh';
-        }
-
-        function formatUptime(ms) {
-            const totalSecs = Math.floor(ms / 1000);
-            const days = Math.floor(totalSecs / 86400);
-            const hours = Math.floor((totalSecs % 86400) / 3600);
-            return `${days}T ${hours}h`;
-        }
-
-        // --- Tab Navigation ---
         function switchTab(tabId) {
-            document.getElementById('view-live').classList.add('hidden');
-            document.getElementById('view-history').classList.add('hidden');
-            document.getElementById('view-config').classList.add('hidden');
+            document.getElementById('tab-live').classList.add('hidden');
+            document.getElementById('tab-history').classList.add('hidden');
+            document.getElementById('tab-settings').classList.add('hidden');
             
-            document.getElementById('view-' + tabId).classList.remove('hidden');
-
-            const tabs = ['live', 'history', 'config'];
-            tabs.forEach(t => {
-                const el = document.getElementById('tab-' + t);
-                el.classList.remove('border-primary', 'text-primary');
-                el.classList.add('border-transparent', 'text-gray-400');
+            ['live', 'history', 'settings'].forEach(id => {
+                const btn = document.getElementById('tab-btn-' + id);
+                btn.classList.remove('tab-active');
+                btn.classList.add('tab-inactive');
             });
 
-            const activeEl = document.getElementById('tab-' + tabId);
-            activeEl.classList.remove('border-transparent', 'text-gray-400');
-            activeEl.classList.add('border-primary', 'text-primary');
+            document.getElementById('tab-' + tabId).classList.remove('hidden');
+            const activeBtn = document.getElementById('tab-btn-' + tabId);
+            activeBtn.classList.remove('tab-inactive');
+            activeBtn.classList.add('tab-active');
 
-            if (tabId === 'history' && !historyLoaded) loadHistoryData();
-            if (tabId === 'config' && !configLoaded && configUnlocked) loadConfigData();
-        }
-
-        // --- Config Auth ---
-        function unlockConfig() {
-            const pwd = document.getElementById('login_pwd').value;
-            if (pwd === "admin") {
-                configUnlocked = true;
-                document.getElementById('config-login').classList.add('hidden');
-                document.getElementById('config-content').classList.remove('hidden');
-                document.getElementById('config-content').classList.add('animate-fade-in');
-                
-                if (!configLoaded) loadConfigData();
-            } else {
-                alert("Falsches Passwort!");
-                document.getElementById('login_pwd').value = ""; 
-            }
-        }
-
-        // --- Live Daten Logik ---
-        async function fetchLive() {
-            let data;
-            try {
-                const response = await fetch('/live');
-                if (!response.ok) throw new Error('Network error');
-                data = await response.json();
-            } catch (error) { 
-                console.error("Fehler beim Abrufen der Live-Daten:", error);
-                return; 
+            // Lade Historien-Daten nur wenn der Tab geöffnet wird
+            if (tabId === 'history' && !isHistoryLoaded) {
+                loadHistoryData();
+                isHistoryLoaded = true;
             }
             
-            lastLiveData = data; 
-            updateDashboard(data);
-        }
-
-        function updateDashboard(data) {
-            const sol_w = data.sol_v * data.sol_a;
-            const bat_w = data.bat_v * data.bat_a;
-            const inv_w = sol_w - bat_w; 
-
-            document.getElementById('val-sol-w').innerText = sol_w.toFixed(0) + ' W';
-            document.getElementById('val-sol-v').innerText = data.sol_v.toFixed(1);
-            document.getElementById('val-sol-a').innerText = data.sol_a.toFixed(1);
-
-            document.getElementById('val-bat-w').innerText = Math.abs(bat_w).toFixed(0) + ' W';
-            document.getElementById('val-bat-v').innerText = data.bat_v.toFixed(1);
-            document.getElementById('val-bat-a').innerText = Math.abs(data.bat_a).toFixed(1);
-
-            document.getElementById('val-inv-w').innerText = Math.max(0, inv_w).toFixed(0) + ' W'; 
-
-            const pathSolar = document.getElementById('path-solar');
-            const pathBattery = document.getElementById('path-battery');
-            const pathInverter = document.getElementById('path-inverter');
-            const txtChargeState = document.getElementById('txt-charge-state');
-
-            if (sol_w > 5) {
-                pathSolar.classList.remove('paused');
-                pathSolar.style.animationDuration = Math.max(0.2, 2.0 - (sol_w / 500)) + 's'; 
-            } else pathSolar.classList.add('paused');
-
-            if (Math.abs(bat_w) < 5) {
-                pathBattery.classList.add('paused');
-                txtChargeState.innerText = "Ruhezustand";
-                txtChargeState.className = "font-mono font-medium text-gray-400";
-            } else {
-                pathBattery.classList.remove('paused');
-                pathBattery.style.animationDuration = Math.max(0.2, 2.0 - (Math.abs(bat_w) / 500)) + 's';
-                if (data.bat_a >= 0) {
-                    pathBattery.classList.remove('flow-reverse');
-                    document.getElementById('icon-battery').setAttribute('data-lucide', 'battery-charging');
-                    txtChargeState.innerText = "Laden";
-                    txtChargeState.className = "font-mono font-medium text-battery";
+            // Login-Logik beim Wechsel auf Einstellungen
+            if (tabId === 'settings') {
+                if (isSettingsUnlocked) {
+                    document.getElementById('settings-login').classList.add('hidden');
+                    document.getElementById('settings-content').classList.remove('hidden');
+                    if (!isConfigLoaded) loadConfig();
                 } else {
-                    pathBattery.classList.add('flow-reverse');
-                    document.getElementById('icon-battery').setAttribute('data-lucide', 'battery-medium');
-                    txtChargeState.innerText = "Entladen";
-                    txtChargeState.className = "font-mono font-medium text-solar";
+                    document.getElementById('settings-login').classList.remove('hidden');
+                    document.getElementById('settings-content').classList.add('hidden');
+                    document.getElementById('pw-error').classList.add('hidden');
+                    document.getElementById('settings-pw').value = ''; // Feld leeren
                 }
-                lucide.createIcons();
             }
-
-            // Inverter Animation - Läuft nur, wenn W > 5 UND der Inverter auch echte 230V ausgibt (inv_volt == 1)
-            if (inv_w > 5 && data.inv_volt === 1) {
-                pathInverter.classList.remove('paused');
-                pathInverter.style.animationDuration = Math.max(0.2, 2.0 - (inv_w / 500)) + 's';
-            } else pathInverter.classList.add('paused');
-
-            const txtRelay = document.getElementById('txt-relay-state');
-            const invStatus = document.getElementById('inv-status');
-            
-            // Relais Logik (Active-LOW: 0 = Durchgeschaltet/An, 1 = Getrennt/Aus)
-            if (data.inv_relay === 0) {
-                txtRelay.innerText = "LOW (Aktiv)";
-                txtRelay.className = "font-mono font-medium text-green-500";
-                // 230V Logik (Normal: 1 = 230V da, 0 = Keine Spannung)
-                invStatus.innerText = data.inv_volt === 1 ? "Online" : "Startet...";
-                invStatus.className = data.inv_volt === 1 ? "text-green-500" : "text-yellow-500";
+        }
+        
+        // --- Auth Funktionen ---
+        function checkPassword(e) {
+            e.preventDefault();
+            const pw = document.getElementById('settings-pw').value;
+            if (pw === 'hardy') {
+                isSettingsUnlocked = true;
+                sessionStorage.setItem('solar_auth', 'true');
+                document.getElementById('settings-login').classList.add('hidden');
+                document.getElementById('settings-content').classList.remove('hidden');
+                document.getElementById('pw-error').classList.add('hidden');
+                if (!isConfigLoaded) loadConfig();
             } else {
-                txtRelay.innerText = "HIGH (Getrennt)";
-                txtRelay.className = "font-mono font-medium text-red-500";
-                // Prüfen ob evtl. noch Restspannung anliegt, obwohl Relais schon getrennt hat
-                invStatus.innerText = data.inv_volt === 1 ? "Stoppt..." : "Offline";
-                invStatus.className = data.inv_volt === 1 ? "text-yellow-500" : "text-red-500";
+                document.getElementById('pw-error').classList.remove('hidden');
+                const input = document.getElementById('settings-pw');
+                input.classList.add('border-red-500');
+                setTimeout(() => input.classList.remove('border-red-500'), 1500);
             }
-
-            const now = new Date();
-            document.getElementById('txt-last-update').innerText = now.toLocaleTimeString('de-DE');
         }
 
-        // --- History Daten Laden & Parsen ---
-        async function loadHistoryData() {
+        function lockSettings() {
+            isSettingsUnlocked = false;
+            sessionStorage.removeItem('solar_auth');
+            switchTab('settings');
+        }
+
+        // --- System Steuerungs-Funktionen ---
+        function showSystemMsg(text, type = 'success') {
+            const msg = document.getElementById('system-msg');
+            msg.textContent = text;
+            msg.className = `text-sm font-medium mt-3 transition-opacity text-center ${type === 'error' ? 'text-red-400' : 'text-emerald-400'}`;
+            msg.classList.remove('hidden');
+            setTimeout(() => msg.classList.add('hidden'), 5000);
+        }
+
+        async function toggleInverter() {
+            const btn = document.getElementById('btn-toggle');
+            const originalHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.classList.add('opacity-50', 'cursor-not-allowed');
+            btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> Sende...';
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+
             try {
-                const [resTotals, resRing, resLog] = await Promise.all([
-                    fetch('/totals.bin'), 
-                    fetch('/ring.bin'),
-                    fetch('/log.bin')
-                ]);
-                
-                if (!resTotals.ok || !resRing.ok) throw new Error("Konnte Historien-Dateien nicht laden");
-                
-                const totalsBuffer = await resTotals.arrayBuffer();
-                const ringBuffer = await resRing.arrayBuffer();
-                
-                let logBuffer = null;
-                if(resLog.ok) logBuffer = await resLog.arrayBuffer();
-
-                if (logBuffer) globalLogBuffer = logBuffer; 
-
-                parseAndRenderTotals(totalsBuffer);
-                parseAndRenderRing(ringBuffer);
-                if (logBuffer) parseAndRenderLog(logBuffer);
-                
-                historyLoaded = true;
-            } catch (e) {
-                console.error("Fehler beim Laden der Historie:", e);
-                document.getElementById('tot-solar').innerText = "Fehler";
-                alert("Konnte Historien-Daten nicht vom ESP32 laden. Stelle sicher, dass du mit dem WLAN des Trackers verbunden bist.");
+                const response = await fetch('/toggle');
+                if (!response.ok) throw new Error('Netzwerk-Fehler');
+                const responseText = await response.text();
+                showSystemMsg(responseText || 'Inverter Toggle gesendet!', 'success');
+            } catch (error) {
+                console.log("Fehler beim Inverter Toggle:", error);
+                showSystemMsg('Fehler beim Senden (ESP offline?)', 'error');
+            } finally {
+                btn.innerHTML = originalHtml;
+                btn.disabled = false;
+                btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                if (typeof lucide !== 'undefined') lucide.createIcons();
             }
         }
 
-        function parseAndRenderTotals(buffer) {
-            const dv = new DataView(buffer);
-            const solWh = dv.getFloat64(0, true);
-            const batInWh = dv.getFloat64(8, true);
-            const batOutWh = dv.getFloat64(16, true);
-            const uptimeMs = Number(dv.getBigUint64(24, true));
+        async function rebootESP() {
+            const btn = document.getElementById('btn-reboot');
+            const originalHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.classList.add('opacity-50', 'cursor-not-allowed');
+            btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> Neustart...';
+            if (typeof lucide !== 'undefined') lucide.createIcons();
 
-            document.getElementById('tot-solar').innerText = formatWh(solWh);
-            document.getElementById('tot-bat-in').innerText = formatWh(batInWh);
-            document.getElementById('tot-bat-out').innerText = formatWh(batOutWh);
-            document.getElementById('tot-uptime').innerText = formatUptime(uptimeMs);
-        }
-
-        function parseAndRenderRing(buffer) {
-            const dv = new DataView(buffer);
-            const counterIndex = dv.getUint8(0);
-            
-            const labels = [];
-            const dataSolWh = [];
-            const dataMaxSolA = [];
-            
-            const dataBatIn = [];
-            const dataBatOut = [];
-            const dataMaxBatDisA = [];
-            
-            const dataVoltMax = [];
-            const dataVoltMin = [];
-            const dataVoltSunrise = [];
-
-            for (let i = 0; i < 144; i++) {
-                const slotIdx = (counterIndex + i) % 144; 
-                const offset = 1 + (slotIdx * 32); 
-
-                const sol_wh = dv.getFloat32(offset + 0, true);
-                const bat_in_wh = dv.getFloat32(offset + 4, true);
-                const bat_out_wh = dv.getFloat32(offset + 8, true);
-                const max_sol_a = dv.getFloat32(offset + 12, true);
-                const max_bat_dis_a = dv.getFloat32(offset + 16, true);
-                const max_bat_v = dv.getFloat32(offset + 20, true);
-                const min_bat_v = dv.getFloat32(offset + 24, true);
-                const min_bat_v_sun = dv.getFloat32(offset + 28, true);
-
-                const minsAgo = (144 - i) * 10;
-                let label = `-${minsAgo}m`;
-                if (minsAgo >= 60) label = `-${Math.round(minsAgo/60)}h`;
-                labels.push(label);
-
-                dataSolWh.push(sol_wh);
-                dataMaxSolA.push(max_sol_a);
-
-                dataBatIn.push(bat_in_wh);
-                dataBatOut.push(-bat_out_wh);
-                dataMaxBatDisA.push(-max_bat_dis_a); 
+            try {
+                const response = await fetch('/reboot');
+                if (!response.ok) throw new Error('Netzwerk-Fehler');
+                const responseText = await response.text();
+                showSystemMsg(responseText || 'ESP32 startet neu...', 'success');
                 
-                dataVoltMax.push(max_bat_v === 0 ? null : max_bat_v);
-                dataVoltMin.push(min_bat_v === 35 ? null : min_bat_v);
-                dataVoltSunrise.push(min_bat_v_sun === 35 ? null : min_bat_v_sun);
+                // Nach 3 Sekunden Seite neu laden
+                setTimeout(() => window.location.reload(), 3000);
+            } catch (error) {
+                console.log("Fehler beim ESP Neustart:", error);
+                showSystemMsg('Verbindung verloren (System startet neu)', 'success');
+                setTimeout(() => window.location.reload(), 4000);
+            } finally {
+                btn.innerHTML = originalHtml;
+                btn.disabled = false;
+                btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                if (typeof lucide !== 'undefined') lucide.createIcons();
             }
-
-            renderSolarChart(labels, dataSolWh, dataMaxSolA);
-            renderBatteryChart(labels, dataBatIn, dataBatOut, dataMaxBatDisA);
-            renderVoltageChart(labels, dataVoltMax, dataVoltMin, dataVoltSunrise);
         }
 
-        function parseAndRenderLog(buffer) {
-            const dv = new DataView(buffer);
-            const numSlots = Math.floor(buffer.byteLength / 5);
-            
-            // Konfiguration laden (mit sicheren Fallbacks)
-            let solar_amp_offset = parseFloat(document.getElementById('c_sol_off').value) || 15000;
-            let battery_amp_offset_offset = parseFloat(document.getElementById('c_bat_off_diff').value) || 0;
-            const solar_amp_corr = parseFloat(document.getElementById('c_sol_corr').value) || 1.0;
-            const battery_amp_corr = parseFloat(document.getElementById('c_bat_corr').value) || 1.0;
-            const ignore_amp = parseFloat(document.getElementById('c_ign_amp').value) || 1.0;
-            const amp_step = 0.0138718;
-            
-            let battery_amp_offset = solar_amp_offset + battery_amp_offset_offset;
+        // Modal Funktionen für Reset Logs
+        function showResetModal() {
+            const modal = document.getElementById('confirm-modal');
+            const box = document.getElementById('confirm-modal-box');
+            modal.classList.remove('hidden');
+            setTimeout(() => {
+                modal.classList.remove('opacity-0');
+                box.classList.remove('scale-95');
+            }, 10);
+        }
 
-            const dailyData = {}; 
+        function hideResetModal() {
+            const modal = document.getElementById('confirm-modal');
+            const box = document.getElementById('confirm-modal-box');
+            modal.classList.add('opacity-0');
+            box.classList.add('scale-95');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+            }, 300);
+        }
 
-            for (let i = 0; i < numSlots; i++) {
-                const offset = i * 5;
-                const b0 = dv.getUint8(offset);
-                const b1 = dv.getUint8(offset + 1);
-                const b2 = dv.getUint8(offset + 2);
-                const b3 = dv.getUint8(offset + 3);
-                const b4 = dv.getUint8(offset + 4);
+        async function resetLogs() {
+            const btn = document.getElementById('btn-confirm-reset');
+            const originalHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.classList.add('opacity-50', 'cursor-not-allowed');
+            btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> Lösche...';
+            if (typeof lucide !== 'undefined') lucide.createIcons();
 
-                // --- Dekomprimierung ---
-                const sol_amp_comp = (b0 << 4) | (b1 >> 4);
-                const bat_amp_comp = ((b1 & 0x0F) << 8) | b2;
+            try {
+                const response = await fetch('/reset_logs');
+                if (!response.ok) throw new Error('Netzwerk-Fehler');
+                const responseText = await response.text();
                 
-                const sol_volt_raw = ((b3 & 0x7F) << 8) | 128; 
-                const bat_volt_raw = (b4 * 48) + 20753;
+                hideResetModal();
+                showSystemMsg(responseText || 'Logs erfolgreich gelöscht!', 'success');
                 
-                const sol_amp_raw = (sol_amp_comp << 1) + 15000;
-                const bat_amp_raw = bat_amp_comp << 3;
-
-                // --- Konvertierung (1:1 aus C++) ---
-                let solar_voltage = sol_volt_raw * (40 / 32767.0);
-                let battery_voltage = bat_volt_raw * (30 / 32767.0);
-
-                if (solar_voltage < 5.0) {
-                    solar_amp_offset = (solar_amp_offset * 0.99) + (sol_amp_raw * 0.01);
-                    battery_amp_offset = solar_amp_offset + battery_amp_offset_offset;
-                }
-
-                let solar_ampere_ = (sol_amp_raw - solar_amp_offset) * amp_step * solar_amp_corr;
-                let battery_ampere_ = (bat_amp_raw - battery_amp_offset) * amp_step * battery_amp_corr;
-
-                if (solar_ampere_ < ignore_amp) solar_ampere_ = 0.0;
-                if (Math.abs(battery_ampere_) < ignore_amp) battery_ampere_ = 0.0;
-
-                const solWh = (solar_voltage * solar_ampere_) / 6.0;
-                const batWh = (battery_voltage * battery_ampere_) / 6.0;
-                
-                const slotDate = new Date(Date.now() - (numSlots - 1 - i) * 10 * 60000);
-                const dateKey = slotDate.toLocaleDateString('de-DE'); 
-
-                if (!dailyData[dateKey]) {
-                    dailyData[dateKey] = { solWh: 0, batInWh: 0, batOutWh: 0 };
-                }
-
-                dailyData[dateKey].solWh += solWh;
-                if (batWh > 0) dailyData[dateKey].batInWh += batWh;
-                else dailyData[dateKey].batOutWh += Math.abs(batWh);
+                isHistoryLoaded = false; 
+            } catch (error) {
+                console.log("Fehler beim Löschen:", error);
+                hideResetModal();
+                showSystemMsg('Fehler beim Löschen der Logs!', 'error');
+            } finally {
+                btn.innerHTML = originalHtml;
+                btn.disabled = false;
+                btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                if (typeof lucide !== 'undefined') lucide.createIcons();
             }
-
-            const labels = Object.keys(dailyData);
-            const dataSol = labels.map(k => dailyData[k].solWh);
-            const dataBatIn = labels.map(k => dailyData[k].batInWh);
-            const dataBatOut = labels.map(k => -dailyData[k].batOutWh);
-
-            document.getElementById('log-stats').innerText = `${labels.length} Tage (${numSlots} Samples)`;
-            renderLongtermChart(labels, dataSol, dataBatIn, dataBatOut);
         }
 
-        function downloadLogCSV(filtered) {
-            if (!globalLogBuffer) return alert("Log-Daten sind noch nicht geladen!");
-            
-            const dv = new DataView(globalLogBuffer);
-            const numSlots = Math.floor(globalLogBuffer.byteLength / 5);
-            
-            // Konfiguration laden
-            let solar_amp_offset = parseFloat(document.getElementById('c_sol_off').value) || 15000;
-            let battery_amp_offset_offset = parseFloat(document.getElementById('c_bat_off_diff').value) || 0;
-            const solar_amp_corr = parseFloat(document.getElementById('c_sol_corr').value) || 1.0;
-            const battery_amp_corr = parseFloat(document.getElementById('c_bat_corr').value) || 1.0;
-            const ignore_amp = parseFloat(document.getElementById('c_ign_amp').value) || 1.0;
-            const amp_step = 0.0138718;
-
-            let battery_amp_offset = solar_amp_offset + battery_amp_offset_offset;
-
-            // Deutsches CSV Format: Semikolon als Trenner
-            let csv = filtered 
-                ? "Datum;Zeit;Solar_Volt;Solar_Ampere;Batterie_Volt;Batterie_Ampere\n"
-                : "Datum;Zeit;Solar_ADC_Volt;Solar_ADC_Amp;Batterie_ADC_Volt;Batterie_ADC_Amp\n";
-
-            const rows = [];
-
-            for (let i = 0; i < numSlots; i++) {
-                const offset = i * 5;
-                const b0 = dv.getUint8(offset);
-                const b1 = dv.getUint8(offset + 1);
-                const b2 = dv.getUint8(offset + 2);
-                const b3 = dv.getUint8(offset + 3);
-                const b4 = dv.getUint8(offset + 4);
-
-                // --- Dekomprimierung ---
-                const sol_amp_comp = (b0 << 4) | (b1 >> 4);
-                const bat_amp_comp = ((b1 & 0x0F) << 8) | b2;
-                
-                const sol_volt_raw = ((b3 & 0x7F) << 8) | 128; 
-                const bat_volt_raw = (b4 * 48) + 20753;
-                
-                const sol_amp_raw = (sol_amp_comp << 1) + 15000;
-                const bat_amp_raw = bat_amp_comp << 3;
-
-                const slotDate = new Date(Date.now() - (numSlots - 1 - i) * 10 * 60000);
-                const dStr = slotDate.toLocaleDateString('de-DE');
-                const tStr = slotDate.toLocaleTimeString('de-DE');
-
-                if (filtered) {
-                    // --- Konvertierung (1:1 aus C++) ---
-                    let solar_voltage = sol_volt_raw * (40 / 32767.0);
-                    let battery_voltage = bat_volt_raw * (30 / 32767.0);
-
-                    if (solar_voltage < 5.0) {
-                        solar_amp_offset = (solar_amp_offset * 0.99) + (sol_amp_raw * 0.01);
-                        battery_amp_offset = solar_amp_offset + battery_amp_offset_offset;
-                    }
-
-                    let solar_ampere_ = (sol_amp_raw - solar_amp_offset) * amp_step * solar_amp_corr;
-                    let battery_ampere_ = (bat_amp_raw - battery_amp_offset) * amp_step * battery_amp_corr;
-
-                    if (solar_ampere_ < ignore_amp) solar_ampere_ = 0.0;
-                    if (Math.abs(battery_ampere_) < ignore_amp) battery_ampere_ = 0.0;
-
-                    // Für deutsches Excel: Punkte durch Kommas ersetzen
-                    const sV = solar_voltage.toFixed(2).replace('.', ',');
-                    const sA = solar_ampere_.toFixed(2).replace('.', ',');
-                    const bV = battery_voltage.toFixed(2).replace('.', ',');
-                    const bA = battery_ampere_.toFixed(2).replace('.', ',');
-
-                    rows.push(`${dStr};${tStr};${sV};${sA};${bV};${bA}`);
-                } else {
-                    rows.push(`${dStr};${tStr};${sol_volt_raw};${sol_amp_raw};${bat_volt_raw};${bat_amp_raw}`);
-                }
-            }
-
-            csv += rows.join("\n");
-            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = filtered ? "solar_log_konvertiert.csv" : "solar_log_raw.csv";
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-        }
-
-        // --- Chart Rendering ---
-        function renderSolarChart(labels, solarWh, maxSolA) {
-            const ctx = document.getElementById('solarChart').getContext('2d');
-            if (solarChartObj) solarChartObj.destroy();
-
-            solarChartObj = new Chart(ctx, {
-                type: 'bar',
-                data: {
-                    labels: labels,
-                    datasets: [
-                        { label: 'Energie (Wh)', data: solarWh, backgroundColor: '#fbbf24', yAxisID: 'y' },
-                        { label: 'Max Strom (A)', data: maxSolA, borderColor: '#f59e0b', type: 'line', tension: 0.3, pointRadius: 0, borderWidth: 2, yAxisID: 'y1' }
-                    ]
-                },
-                options: {
-                    responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } } },
-                    scales: {
-                        x: { ticks: { maxTicksLimit: 6 } },
-                        y: { type: 'linear', position: 'left', title: { display: true, text: 'Wh', color: '#9ca3af', font: {size: 10} }, grid: { color: '#374151' } },
-                        y1: { type: 'linear', position: 'right', title: { display: true, text: 'Ampere', color: '#9ca3af', font: {size: 10} }, grid: { drawOnChartArea: false } }
-                    }
-                }
-            });
-        }
-
-        function renderBatteryChart(labels, batIn, batOut, maxDisA) {
-            const ctx = document.getElementById('batteryChart').getContext('2d');
-            if (batteryChartObj) batteryChartObj.destroy();
-
-            batteryChartObj = new Chart(ctx, {
-                type: 'bar',
-                data: {
-                    labels: labels,
-                    datasets: [
-                        { label: 'Ladung (Wh)', data: batIn, backgroundColor: '#3b82f6', yAxisID: 'y' },
-                        { label: 'Entladung (Wh)', data: batOut, backgroundColor: '#ef4444', yAxisID: 'y' },
-                        { label: 'Max Entladestrom (A)', data: maxDisA, borderColor: '#b91c1c', type: 'line', tension: 0.3, pointRadius: 0, borderWidth: 2, borderDash: [5, 5], yAxisID: 'y1' }
-                    ]
-                },
-                options: {
-                    responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } } },
-                    scales: {
-                        x: { stacked: true, ticks: { maxTicksLimit: 6 } },
-                        y: { stacked: true, type: 'linear', position: 'left', title: { display: true, text: 'Wh', color: '#9ca3af', font: {size: 10} }, grid: { color: '#374151' } },
-                        y1: { type: 'linear', position: 'right', title: { display: true, text: 'Ampere', color: '#9ca3af', font: {size: 10} }, grid: { drawOnChartArea: false } }
-                    }
-                }
-            });
-        }
-
-        function renderVoltageChart(labels, vMax, vMin, vSunrise) {
-            const ctx = document.getElementById('voltageChart').getContext('2d');
-            if (voltageChartObj) voltageChartObj.destroy();
-
-            voltageChartObj = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [
-                        { label: 'Max Volt', data: vMax, borderColor: '#10b981', tension: 0.3, pointRadius: 0, borderWidth: 2 },
-                        { label: 'Min Volt', data: vMin, borderColor: '#ef4444', tension: 0.3, pointRadius: 0, borderWidth: 2 },
-                        { label: 'Min (Sunrise)', data: vSunrise, backgroundColor: '#fbbf24', borderColor: '#fbbf24', showLine: false, pointStyle: 'rectRot', pointRadius: 4 }
-                    ]
-                },
-                options: {
-                    responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } } },
-                    scales: {
-                        x: { ticks: { maxTicksLimit: 6 } },
-                        y: { title: { display: true, text: 'Volt', color: '#9ca3af', font: {size: 10} }, grid: { color: '#374151' } }
-                    }
-                }
-            });
-        }
-
-        function renderLongtermChart(labels, solWh, batInWh, batOutWh) {
-            const ctx = document.getElementById('longtermChart').getContext('2d');
-            if (longtermChartObj) longtermChartObj.destroy();
-
-            longtermChartObj = new Chart(ctx, {
-                type: 'bar',
-                data: {
-                    labels: labels,
-                    datasets: [
-                        { label: 'Solar Ertrag (Wh)', data: solWh, backgroundColor: '#fbbf24', stack: 'Stack 0' },
-                        { label: 'Ladung (Wh)', data: batInWh, backgroundColor: '#3b82f6', stack: 'Stack 1' },
-                        { label: 'Entladung (Wh)', data: batOutWh, backgroundColor: '#ef4444', stack: 'Stack 1' }
-                    ]
-                },
-                options: {
-                    responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } } },
-                    scales: {
-                        x: { stacked: true, ticks: { maxTicksLimit: 14 } },
-                        y: { stacked: true, title: { display: true, text: 'Wh / Tag', color: '#9ca3af', font: {size: 10} }, grid: { color: '#374151' } }
-                    }
-                }
-            });
-        }
-
-        // ================= CONFIG LOGIK =================
-
-        async function loadConfigData() {
+        // --- Config Laden & Speichern ---
+        async function loadConfig() {
             try {
                 const res = await fetch('/config.bin');
-                if (!res.ok) throw new Error("Konnte config.bin nicht laden");
+                if (!res.ok) throw new Error('config.bin nicht gefunden');
                 const buffer = await res.arrayBuffer();
+                
+                // ESP32 arbeitet mit Little Endian
+                const view = new DataView(buffer);
 
-                if (buffer.byteLength !== 57) throw new Error(`Falsche Config Größe!`);
+                document.getElementById('conf_saving_cycle').value = view.getUint32(0, true);
+                document.getElementById('conf_sample_cycle').value = view.getUint32(4, true);
+                document.getElementById('conf_inverter_off').value = view.getUint32(8, true);
+                document.getElementById('conf_inverter_cycle').value = view.getUint32(12, true);
+                document.getElementById('conf_inverter_relay').value = view.getUint32(16, true);
+                document.getElementById('conf_relay_dur').value = view.getUint32(20, true);
 
-                const dv = new DataView(buffer);
-                let o = 0; 
-
-                document.getElementById('c_save_cyc').value = dv.getUint32(o, true); o+=4;
-                document.getElementById('c_samp_cyc').value = dv.getUint32(o, true); o+=4;
-                document.getElementById('c_inv_off_dur').value = dv.getUint32(o, true); o+=4;
-                document.getElementById('c_inv_cyc_dur').value = dv.getUint32(o, true); o+=4;
-                document.getElementById('c_inv_rel_dur').value = dv.getUint32(o, true); o+=4;
-                hiddenConfig.rel_ow_start = dv.getUint32(o, true); o+=4;
-                document.getElementById('c_rel_ow_dur').value = dv.getUint32(o, true); o+=4;
-
-                document.getElementById('c_sol_night_v').value = dv.getFloat32(o, true).toFixed(2); o+=4;
-                document.getElementById('c_bat_under_v').value = dv.getFloat32(o, true).toFixed(2); o+=4;
-
-                document.getElementById('c_sol_off').value = dv.getUint16(o, true); o+=2;
-                document.getElementById('c_bat_off').value = dv.getUint16(o, true); o+=2;
-
-                document.getElementById('c_bat_off_diff').value = dv.getInt16(o, true); o+=2;
-
-                document.getElementById('c_sol_corr').value = dv.getFloat32(o, true).toFixed(4); o+=4;
-                document.getElementById('c_bat_corr').value = dv.getFloat32(o, true).toFixed(4); o+=4;
-                document.getElementById('c_ign_amp').value = dv.getFloat32(o, true).toFixed(2); o+=4;
-
-                document.getElementById('c_cyc_inv').checked = dv.getUint8(o) !== 0; o+=1;
-                hiddenConfig.rel_ow_act = dv.getUint8(o); o+=1;
-                document.getElementById('c_en_log').checked = dv.getUint8(o) !== 0; o+=1;
-
-                configLoaded = true;
-            } catch (e) {
-                console.error("Config Fehler:", e);
-                alert("Fehler beim Laden der Einstellungen vom ESP32.");
+                document.getElementById('conf_cycle_inverter').checked = view.getUint8(24) !== 0;
+                document.getElementById('conf_enable_logging').checked = view.getUint8(25) !== 0;
+                
+                isConfigLoaded = true;
+            } catch (err) {
+                console.log("Fehler beim Laden der Config", err);
             }
         }
 
         async function saveConfig() {
-            if (!configUnlocked) return;
-
-            const buffer = new ArrayBuffer(57);
-            const dv = new DataView(buffer);
-            let o = 0;
+            const btn = document.getElementById('btn-save-config');
+            const originalHtml = btn.innerHTML;
+            
+            btn.disabled = true;
+            btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> Speichere...';
+            if (typeof lucide !== 'undefined') lucide.createIcons();
 
             try {
-                dv.setUint32(o, parseInt(document.getElementById('c_save_cyc').value), true); o+=4;
-                dv.setUint32(o, parseInt(document.getElementById('c_samp_cyc').value), true); o+=4;
-                dv.setUint32(o, parseInt(document.getElementById('c_inv_off_dur').value), true); o+=4;
-                dv.setUint32(o, parseInt(document.getElementById('c_inv_cyc_dur').value), true); o+=4;
-                dv.setUint32(o, parseInt(document.getElementById('c_inv_rel_dur').value), true); o+=4;
-                dv.setUint32(o, hiddenConfig.rel_ow_start, true); o+=4;
-                dv.setUint32(o, parseInt(document.getElementById('c_rel_ow_dur').value), true); o+=4;
+                // Exakt 26 Bytes alloziieren (6*4 + 2*1)
+                const buffer = new ArrayBuffer(26);
+                const view = new DataView(buffer);
 
-                dv.setFloat32(o, parseFloat(document.getElementById('c_sol_night_v').value), true); o+=4;
-                dv.setFloat32(o, parseFloat(document.getElementById('c_bat_under_v').value), true); o+=4;
+                view.setUint32(0, parseInt(document.getElementById('conf_saving_cycle').value) || 0, true);
+                view.setUint32(4, parseInt(document.getElementById('conf_sample_cycle').value) || 0, true);
+                view.setUint32(8, parseInt(document.getElementById('conf_inverter_off').value) || 0, true);
+                view.setUint32(12, parseInt(document.getElementById('conf_inverter_cycle').value) || 0, true);
+                view.setUint32(16, parseInt(document.getElementById('conf_inverter_relay').value) || 0, true);
+                view.setUint32(20, parseInt(document.getElementById('conf_relay_dur').value) || 0, true);
 
-                dv.setUint16(o, parseInt(document.getElementById('c_sol_off').value), true); o+=2;
-                dv.setUint16(o, parseInt(document.getElementById('c_bat_off').value), true); o+=2;
-                dv.setInt16(o, parseInt(document.getElementById('c_bat_off_diff').value), true); o+=2;
+                view.setUint8(24, document.getElementById('conf_cycle_inverter').checked ? 1 : 0);
+                view.setUint8(25, document.getElementById('conf_enable_logging').checked ? 1 : 0);
 
-                dv.setFloat32(o, parseFloat(document.getElementById('c_sol_corr').value), true); o+=4;
-                dv.setFloat32(o, parseFloat(document.getElementById('c_bat_corr').value), true); o+=4;
-                dv.setFloat32(o, parseFloat(document.getElementById('c_ign_amp').value), true); o+=4;
-
-                dv.setUint8(o, document.getElementById('c_cyc_inv').checked ? 1 : 0); o+=1;
-                dv.setUint8(o, hiddenConfig.rel_ow_act); o+=1;
-                dv.setUint8(o, document.getElementById('c_en_log').checked ? 1 : 0); o+=1;
-
+                // Als binären Upload (FormData) an den ESP schicken
                 const blob = new Blob([buffer], { type: 'application/octet-stream' });
-                const fd = new FormData();
-                fd.append('update', blob, 'config.bin');
+                const formData = new FormData();
+                formData.append('file', blob, 'config.bin');
 
-                const res = await fetch('/upload_config', { method: 'POST', body: fd });
-                if (res.ok) {
-                    alert("Einstellungen erfolgreich gespeichert und angewendet!");
-                } else {
-                    throw new Error("Server Error");
-                }
-            } catch (e) { alert("Fehler beim Speichern an den ESP32!"); }
-        }
-
-        function autoCalibrate(type) {
-            const realValStr = document.getElementById(type === 'solar' ? 'cal_real_sol' : 'cal_real_bat').value;
-            const realVal = Math.abs(parseFloat(realValStr)); 
-            if (isNaN(realVal) || realVal <= 0) return alert("Bitte einen gültigen (positiven) Strom eintragen!");
-            
-            const measuredVal = type === 'solar' ? Math.abs(lastLiveData.sol_a) : Math.abs(lastLiveData.bat_a);
-            if (measuredVal < 0.5) return alert(`Achtung: Aktuell gemessener Strom zu gering (${measuredVal.toFixed(2)}A).`);
-
-            const oldCorrInput = document.getElementById(type === 'solar' ? 'c_sol_corr' : 'c_bat_corr');
-            const oldCorr = parseFloat(oldCorrInput.value);
-
-            const newCorr = oldCorr * (realVal / measuredVal);
-
-            oldCorrInput.value = newCorr.toFixed(4);
-            oldCorrInput.classList.add('bg-green-900', 'border-green-500');
-            setTimeout(() => oldCorrInput.classList.remove('bg-green-900', 'border-green-500'), 1500);
-            
-            alert(`Neuer Korrekturfaktor: ${newCorr.toFixed(4)}\n(Bitte "Speichern" drücken!)`);
-        }
-
-        async function systemAction(action) {
-            if (!configUnlocked) return;
-            
-            if (action === 'reset') {
-                if (!confirm("⚠️ WARNUNG! Willst du wirklich ALLE gesammelten Log-Daten (Historie) löschen? Diese Aktion kann NICHT rückgängig gemacht werden!")) return;
-                try {
-                    const res = await fetch('/reset_logs');
-                    if (res.ok) { alert("Logs gelöscht!"); location.reload(); }
-                } catch (e) { alert("Fehler beim Löschen."); }
-            } 
-            else if (action === 'reboot') {
-                if (!confirm("Soll der ESP32 wirklich neu gestartet werden? Das Relais wird dabei kurzzeitig abfallen.")) return;
-                try {
-                    const res = await fetch('/reboot');
-                    if(res.ok) {
-                        alert("Neustart gesendet. Seite lädt gleich neu...");
-                        setTimeout(() => location.reload(), 3000); 
-                    }
-                } catch (e) { alert("Fehler beim Senden des Neustart-Befehls."); }
+                const res = await fetch('/upload_config', { 
+                    method: 'POST', 
+                    body: formData 
+                });
+                
+                if (!res.ok) throw new Error('Upload fehlgeschlagen');
+                const text = await res.text();
+                showSystemMsg(text, 'success');
+            } catch (err) {
+                console.log("Fehler beim Speichern der Config:", err);
+                showSystemMsg('Fehler beim Speichern (ESP offline?)', 'error');
+            } finally {
+                btn.innerHTML = originalHtml;
+                btn.disabled = false;
+                if (typeof lucide !== 'undefined') lucide.createIcons();
             }
         }
 
-        // --- Event Listeners & Init ---
-        document.getElementById('toggleInverterBtn').addEventListener('click', async () => {
-            try {
-                const res = await fetch('/toggle');
-                if(!res.ok) throw new Error("Toggle fehlgeschlagen");
-                const btn = document.getElementById('toggleInverterBtn');
-                const oldHtml = btn.innerHTML;
-                btn.innerHTML = '<i data-lucide="check" class="w-4 h-4 text-green-500"></i> Gesendet';
-                lucide.createIcons();
-                setTimeout(() => { btn.innerHTML = oldHtml; lucide.createIcons(); }, 2000);
-            } catch (e) { alert("Fehler beim Senden"); }
-        });
+        // --- Live Daten Funktionen ---
+        function updateDashboard(data) {
+            const solarPower = data.sol_v * data.sol_a;
+            const batteryPower = data.bat_v * data.bat_a;
 
-        // Init Data Loop
-        fetchLive();
-        setInterval(fetchLive, 1000);
+            document.getElementById('val-sol-pow').innerText = Math.max(0, solarPower).toFixed(0);
+            document.getElementById('val-sol-v').innerText = data.sol_v.toFixed(2) + ' V';
+            document.getElementById('val-sol-a').innerText = data.sol_a.toFixed(2) + ' A';
+
+            document.getElementById('val-bat-pow').innerText = Math.abs(batteryPower).toFixed(0);
+            document.getElementById('val-bat-v').innerText = data.bat_v.toFixed(2) + ' V';
+            document.getElementById('val-bat-a').innerText = data.bat_a.toFixed(2) + ' A';
+            document.getElementById('val-bat-per').innerText = data.bat_per + '%';
+            document.getElementById('bat-progress').style.width = data.bat_per + '%';
+
+            const batBadge = document.getElementById('bat-status-badge');
+            const batProgress = document.getElementById('bat-progress');
+            
+            if (data.bat_a > 0.2) {
+                batBadge.innerText = 'Wird geladen';
+                batBadge.className = 'self-start xl:self-auto text-[10px] md:text-xs font-semibold px-2 py-1 rounded-full bg-emerald-500/20 text-emerald-400 whitespace-nowrap';
+                batProgress.className = 'bg-emerald-500 h-2 md:h-2.5 rounded-full transition-all duration-500';
+            } else if (data.bat_a < -0.2) {
+                batBadge.innerText = 'Wird entladen';
+                batBadge.className = 'self-start xl:self-auto text-[10px] md:text-xs font-semibold px-2 py-1 rounded-full bg-orange-500/20 text-orange-400 whitespace-nowrap';
+                batProgress.className = 'bg-orange-500 h-2 md:h-2.5 rounded-full transition-all duration-500';
+            } else {
+                batBadge.innerText = 'Standby';
+                batBadge.className = 'self-start xl:self-auto text-[10px] md:text-xs font-semibold px-2 py-1 rounded-full bg-slate-700 text-slate-300 whitespace-nowrap';
+                batProgress.className = 'bg-slate-500 h-2 md:h-2.5 rounded-full transition-all duration-500';
+            }
+
+            document.getElementById('val-out-pow').innerText = data.out_pow;
+            updateFlowAnimations(data, solarPower);
+            
+            const statusDot = document.getElementById('status-dot');
+            statusDot.className = 'w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.8)]';
+            document.getElementById('status-text').innerText = 'Live verbunden';
+        }
+
+        function updateFlowAnimations(data, solarPower) {
+            const solDesk = document.getElementById('flow-sol-desk'), solMob = document.getElementById('flow-sol-mob');
+            const batDesk = document.getElementById('flow-bat-desk'), batMob = document.getElementById('flow-bat-mob');
+            const loadDesk = document.getElementById('flow-load-desk'), loadMob = document.getElementById('flow-load-mob');
+            const hubDot = document.getElementById('hub-active-dot');
+
+            const isSolarActive = solarPower > 5;
+            const isLoadActive = data.out_pow > 5;
+            const isBatCharging = data.bat_a > 0.2;
+            const isBatDischarging = data.bat_a < -0.2;
+
+            if (isSolarActive || isLoadActive || isBatCharging || isBatDischarging) {
+                hubDot.className = 'absolute top-2 right-1/2 translate-x-6 md:translate-x-10 w-3 h-3 md:w-4 md:h-4 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.8)] transition-colors duration-300 z-30';
+            } else {
+                hubDot.className = 'absolute top-2 right-1/2 translate-x-6 md:translate-x-10 w-3 h-3 md:w-4 md:h-4 rounded-full bg-slate-700 border border-slate-600 transition-colors duration-300 z-30';
+            }
+
+            const setFlow = (el, isActive, colorClass, direction = 'forwards') => {
+                el.classList.remove('text-yellow-400', 'text-emerald-400', 'text-blue-400', 'text-orange-400', 'text-slate-600', 'paused');
+                const line = el.querySelector('line');
+                if(line) line.classList.remove('flow-forwards', 'flow-backwards');
+                
+                if (isActive) {
+                    el.classList.add(colorClass);
+                    if(line) line.classList.add(direction === 'forwards' ? 'flow-forwards' : 'flow-backwards');
+                } else {
+                    el.classList.add('text-slate-600', 'paused');
+                }
+            };
+
+            setFlow(solDesk, isSolarActive, 'text-yellow-400');
+            setFlow(solMob, isSolarActive, 'text-yellow-400');
+
+            let batColor = 'text-slate-600', batDir = 'forwards', batActive = false;
+            if (isBatCharging) { batColor = 'text-emerald-400'; batDir = 'forwards'; batActive = true; } 
+            else if (isBatDischarging) { batColor = 'text-orange-400'; batDir = 'backwards'; batActive = true; }
+
+            setFlow(batDesk, batActive, batColor, batDir);
+            setFlow(batMob, batActive, batColor, batDir);
+
+            ['desk', 'mob'].forEach(type => {
+                document.getElementById(`head-bat-down-${type}`).classList.toggle('hidden', isBatDischarging);
+                document.getElementById(`head-bat-up-${type}`).classList.toggle('hidden', !isBatDischarging);
+            });
+
+            let loadColor = 'text-blue-400'; 
+            if (isLoadActive) {
+                if (isBatDischarging && !isSolarActive) loadColor = 'text-orange-400';
+                else if (isSolarActive && !isBatDischarging) loadColor = 'text-yellow-400';
+            }
+            
+            setFlow(loadDesk, isLoadActive, loadColor);
+            setFlow(loadMob, isLoadActive, loadColor);
+        }
+
+        // --- Historie Daten Logik ---
+        
+        // Hilfsfunktion: Formatierung von großen Wattstunden
+        function formatWh(value) {
+            if (value > 1000) return { val: (value / 1000).toFixed(2), unit: 'kWh' };
+            return { val: Math.round(value), unit: 'Wh' };
+        }
+
+        // Hilfsfunktion: Millisekunden in T, h, m umwandeln
+        function formatUptime(ms) {
+            const totalMinutes = Math.floor(Number(ms) / 60000);
+            const days = Math.floor(totalMinutes / (60 * 24));
+            const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+            const minutes = totalMinutes % 60;
+            return `${days}T ${hours}h ${minutes}m`;
+        }
+
+        async function loadHistoryData() {
+            // 1. Lade Totals (Lifetime)
+            document.getElementById('hist-loading-totals').classList.remove('hidden');
+            try {
+                const resTotals = await fetch('/totals.bin');
+                let buffer;
+                if (!resTotals.ok) throw new Error('totals.bin fetch failed');
+                buffer = await resTotals.arrayBuffer();
+                
+                // C++ Struct parsen (Little Endian, wie auf ESP32 üblich)
+                const view = new DataView(buffer);
+                // struct TotalStats { double solar_wh(0); double bat_charge(8); double bat_discharge(16); uint64_t uptime(24); }
+                const totals = {
+                    solar: view.getFloat64(0, true),
+                    charge: view.getFloat64(8, true),
+                    discharge: view.getFloat64(16, true),
+                    uptime: view.getBigUint64(24, true)
+                };
+
+                const sFmt = formatWh(totals.solar);
+                document.getElementById('tot-solar').innerText = sFmt.val;
+                document.getElementById('tot-solar-unit').innerText = sFmt.unit;
+                
+                const cFmt = formatWh(totals.charge);
+                document.getElementById('tot-charge').innerText = cFmt.val;
+                document.getElementById('tot-charge-unit').innerText = cFmt.unit;
+                
+                const dFmt = formatWh(totals.discharge);
+                document.getElementById('tot-discharge').innerText = dFmt.val;
+                document.getElementById('tot-discharge-unit').innerText = dFmt.unit;
+                
+                document.getElementById('tot-uptime').innerText = formatUptime(totals.uptime);
+
+            } catch (err) {
+                console.log("Fehler beim Laden von totals.bin", err);
+            } finally {
+                document.getElementById('hist-loading-totals').classList.add('hidden');
+            }
+
+            // 2. Lade 24h Ringpuffer (144 Messungen)
+            document.getElementById('hist-loading-ring').classList.remove('hidden');
+            try {
+                const resRing = await fetch('/ring.bin');
+                if (!resRing.ok) throw new Error('ring.bin fetch failed');
+                const buffer = await resRing.arrayBuffer();
+                
+                // 6 Arrays á 144 floats = 864 floats
+                const floats = new Float32Array(buffer);
+                renderRingData(floats);
+            } catch (err) {
+                console.log("Fehler beim Laden von ring.bin", err);
+            } finally {
+                document.getElementById('hist-loading-ring').classList.add('hidden');
+            }
+
+            // 3. Lade Langzeitaufzeichnung (log.bin)
+            await loadLogData();
+        }
+
+        function renderRingData(floats) {
+            // Arrays entpacken (jeweils 144 floats)
+            const ring_solar_wh = Array.from(floats.slice(0, 144));
+            const ring_battery_charge_wh = Array.from(floats.slice(144, 288));
+            const ring_battery_discharge_wh = Array.from(floats.slice(288, 432));
+            const ring_max_sol_amp = Array.from(floats.slice(432, 576));
+            const ring_max_bat_volt = Array.from(floats.slice(576, 720));
+            const ring_bat_volt_sunrise = Array.from(floats.slice(720, 864));
+
+            // --- Highlights berechnen ---
+            const maxAmp = Math.max(...ring_max_sol_amp);
+            const maxVolt = Math.max(...ring_max_bat_volt);
+            
+            // Sunrise Spannung (ignoriere Default 35.0 und 0)
+            const validSunrise = ring_bat_volt_sunrise.filter(v => v !== 35.0 && v > 0);
+            const minSunrise = validSunrise.length > 0 ? Math.min(...validSunrise) : null;
+
+            document.getElementById('ring-max-amp').innerText = maxAmp.toFixed(1) + ' A';
+            document.getElementById('ring-max-volt').innerText = maxVolt.toFixed(1) + ' V';
+            document.getElementById('ring-min-sunrise').innerText = minSunrise !== null ? minSunrise.toFixed(1) + ' V' : 'Kein Sunrise';
+
+            // --- Chart.js Rendern ---
+            const ctx = document.getElementById('historyChart').getContext('2d');
+            
+            // X-Achsen Labels generieren (144 Punkte, z.B. -24h bis Jetzt)
+            const labels = Array.from({length: 144}, (_, i) => {
+                const hoursAgo = Math.floor((144 - i) / 6);
+                if (i === 143) return 'Jetzt';
+                if ((144 - i) % 12 === 0) return `-${hoursAgo}h`; // Beschriftung alle 2 Stunden
+                return '';
+            });
+
+            if (historyChartInstance) { historyChartInstance.destroy(); }
+
+            // Tailwind Farb-Variablen auslesen
+            const colorSolar = '#facc15';    // yellow-400
+            const colorCharge = '#34d399';   // emerald-400
+            const colorDischarge = '#fb923c';// orange-400
+            const colorGrid = '#334155';     // slate-700
+            const colorText = '#94a3b8';     // slate-400
+
+            historyChartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Solarertrag (Wh)',
+                            data: ring_solar_wh,
+                            borderColor: colorSolar,
+                            backgroundColor: colorSolar + '20',
+                            borderWidth: 2,
+                            fill: true,
+                            tension: 0.4,
+                            pointRadius: 0,
+                            pointHitRadius: 10
+                        },
+                        {
+                            label: 'Ladung (Wh)',
+                            data: ring_battery_charge_wh,
+                            borderColor: colorCharge,
+                            borderWidth: 2,
+                            borderDash: [5, 5],
+                            tension: 0.4,
+                            pointRadius: 0,
+                            pointHitRadius: 10
+                        },
+                        {
+                            label: 'Entladung (Wh)',
+                            data: ring_battery_discharge_wh,
+                            borderColor: colorDischarge,
+                            borderWidth: 2,
+                            tension: 0.4,
+                            pointRadius: 0,
+                            pointHitRadius: 10
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { labels: { color: colorText, usePointStyle: true, padding: 20 } },
+                        tooltip: { backgroundColor: 'rgba(15, 23, 42, 0.9)', titleColor: '#fff', bodyColor: '#fff', padding: 10, borderColor: colorGrid, borderWidth: 1 }
+                    },
+                    scales: {
+                        x: { grid: { color: colorGrid, drawBorder: false }, ticks: { color: colorText, maxRotation: 0 } },
+                        y: { grid: { color: colorGrid, drawBorder: false }, ticks: { color: colorText }, beginAtZero: true }
+                    }
+                }
+            });
+        }
+
+        // --- Langzeitdaten (log.bin) dekodieren und rendern ---
+        async function loadLogData() {
+            document.getElementById('hist-loading-log').classList.remove('hidden');
+            let logDataArray;
+
+            try {
+                const response = await fetch('/log.bin');
+                if (!response.ok) throw new Error('log.bin nicht gefunden');
+                const buffer = await response.arrayBuffer();
+                logDataArray = new Uint8Array(buffer);
+            } catch (err) {
+                console.log("Fehler beim Laden von log.bin", err);
+                document.getElementById('hist-loading-log').classList.add('hidden');
+                return;
+            }
+
+            // Dekomprimierung der Binärdaten
+            const numSamples = logDataArray.length / 4;
+            const labels = [];
+            const dataSolV = [], dataBatV = [], dataInvStatus = [];
+            const dataSolA = [], dataBatA = [];
+            
+            // Für CSV Export speichern
+            globalLogData = [];
+
+            // Um Datum rückwirkend zu berechnen (Alle 10 Min ein Sample, letztes Sample = Jetzt)
+            const nowTime = new Date().getTime();
+
+            for (let i = 0; i < numSamples; i++) {
+                const offset = i * 4;
+                const b0 = logDataArray[offset];
+                const b1 = logDataArray[offset + 1];
+                const b2 = logDataArray[offset + 2];
+                const b3 = logDataArray[offset + 3];
+
+                // Dekomprimierungs-Logik (Umkehrung der C++ Komprimierung)
+                const bat_amp = (b0 * (170.0 / 255.0)) - 130.0;
+                const sol_volt = b1 * (40.0 / 255.0);
+                const sol_amp = b2 * (25.0 / 255.0);
+                const inverter_on = (b3 & 0x80) !== 0; // Bit 7 prüfen
+                const bat_volt = ((b3 & 0x7F) * (11.0 / 127.0)) + 19.0; // Restliche 7 Bits
+
+                // Zeitstempel generieren (-10 Min pro Schritt in die Vergangenheit)
+                const timeOffset = (numSamples - 1 - i) * 10 * 60 * 1000;
+                const sampleDate = new Date(nowTime - timeOffset);
+                
+                // Beschriftung für Chart reduzieren (z.B. nur Tag + Uhrzeit)
+                labels.push(sampleDate.toLocaleDateString('de-DE', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }));
+
+                dataSolV.push(sol_volt);
+                dataBatV.push(bat_volt);
+                dataInvStatus.push(inverter_on ? 1 : 0); // Für Chart
+                
+                dataSolA.push(sol_amp);
+                dataBatA.push(bat_amp);
+
+                // Für CSV bereitlegen
+                globalLogData.push({
+                    date: sampleDate.toLocaleString('de-DE'),
+                    sol_v: sol_volt, sol_a: sol_amp, bat_v: bat_volt, bat_a: bat_amp, inv: inverter_on
+                });
+            }
+
+            document.getElementById('hist-loading-log').classList.add('hidden');
+            document.getElementById('btn-csv').classList.remove('hidden'); // CSV Button aktivieren
+
+            // --- Chart 1: Spannungen ---
+            if (logChartVoltInstance) logChartVoltInstance.destroy();
+            logChartVoltInstance = new Chart(document.getElementById('logVoltChart'), {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: 'Solar Spannung (V)', data: dataSolV, borderColor: '#facc15', borderWidth: 1.5, pointRadius: 0, tension: 0.1 },
+                        { label: 'Batterie Spannung (V)', data: dataBatV, borderColor: '#34d399', borderWidth: 1.5, pointRadius: 0, tension: 0.1 },
+                        { label: 'Inverter Status', data: dataInvStatus, borderColor: '#60a5fa', backgroundColor: 'rgba(96, 165, 250, 0.1)', borderWidth: 1, pointRadius: 0, fill: true, stepped: true, yAxisID: 'yInv' }
+                    ]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
+                    plugins: { legend: { labels: { color: '#94a3b8', usePointStyle: true, padding: 10 } } },
+                    scales: {
+                        x: { grid: { color: '#334155', drawBorder: false }, ticks: { color: '#94a3b8', maxTicksLimit: 10 } },
+                        y: { grid: { color: '#334155', drawBorder: false }, ticks: { color: '#94a3b8' }, title: { display: true, text: 'Volt (V)', color: '#94a3b8' } },
+                        yInv: { position: 'right', grid: { drawOnChartArea: false }, min: 0, max: 1.2, ticks: { stepSize: 1, callback: function(value) { return value === 1 ? 'An' : value === 0 ? 'Aus' : ''; }, color: '#60a5fa' } }
+                    }
+                }
+            });
+
+            // --- Chart 2: Ströme ---
+            if (logChartAmpInstance) logChartAmpInstance.destroy();
+            logChartAmpInstance = new Chart(document.getElementById('logAmpChart'), {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: 'Solar Strom (A)', data: dataSolA, borderColor: '#facc15', borderWidth: 1.5, pointRadius: 0, tension: 0.1, fill: true, backgroundColor: 'rgba(250, 204, 21, 0.1)' },
+                        { label: 'Batterie Strom (A)', data: dataBatA, borderColor: '#fb923c', borderWidth: 1.5, pointRadius: 0, tension: 0.1, fill: true, backgroundColor: 'rgba(251, 146, 60, 0.1)' }
+                    ]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
+                    plugins: { legend: { labels: { color: '#94a3b8', usePointStyle: true, padding: 10 } } },
+                    scales: {
+                        x: { grid: { color: '#334155', drawBorder: false }, ticks: { color: '#94a3b8', maxTicksLimit: 10 } },
+                        y: { grid: { color: '#334155', drawBorder: false }, ticks: { color: '#94a3b8' }, title: { display: true, text: 'Ampere (A)', color: '#94a3b8' } }
+                    }
+                }
+            });
+        }
+
+        // CSV Download Funktion (Deutsch Formatiert)
+        function downloadCSV() {
+            if (!globalLogData || globalLogData.length === 0) return;
+            
+            // Header
+            let csvContent = "Datum / Uhrzeit;Solar Spannung (V);Solar Strom (A);Batterie Spannung (V);Batterie Strom (A);Inverter Last Aktiv\n";
+            
+            // Datenzeilen generieren
+            globalLogData.forEach(row => {
+                // Deutsche Formatierung: Punkt durch Komma ersetzen, Spalten durch Semikolon trennen
+                const formatNum = (num) => num.toFixed(2).replace('.', ',');
+                csvContent += `${row.date};${formatNum(row.sol_v)};${formatNum(row.sol_a)};${formatNum(row.bat_v)};${formatNum(row.bat_a)};${row.inv ? 'Ja' : 'Nein'}\n`;
+            });
+
+            // Blob erzeugen und Herunterladen triggern
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a");
+            const url = URL.createObjectURL(blob);
+            link.setAttribute("href", url);
+            link.setAttribute("download", "solar_tracker_langzeit.csv");
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        async function fetchLiveData() {
+            try {
+                const response = await fetch('/live');
+                if (!response.ok) throw new Error('Network error');
+                const data = await response.json();
+                updateDashboard(data);
+            } catch (error) {
+                const statusDot = document.getElementById('status-dot');
+                if (statusDot) statusDot.className = 'w-2 h-2 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)]';
+                const statusText = document.getElementById('status-text');
+                if (statusText) statusText.innerText = 'Offline / Fehler';
+            }
+        }
+
+        fetchLiveData();
+        setInterval(fetchLiveData, 2000);
 
     </script>
 </body>

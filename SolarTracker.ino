@@ -3,7 +3,7 @@
 #include <WebServer.h>
 #include <DNSServer.h>
 
-#define CONFIG_FILE_SIZE 31
+#define CONFIG_FILE_SIZE 26
 // ----- Pin Definitions -----
 
 int inverter_voltage_pin = 19;
@@ -111,7 +111,6 @@ struct RingSlot {
     float bat_discharge_wh;
     float max_sol_amp;
     float max_bat_volt;
-    float min_bat_volt;
     float bat_volt_sunrise;
 };
 
@@ -307,7 +306,7 @@ void setup() {
     snprintf(buf, sizeof(buf), 
              "{\"sol_v\":%.2f,\"sol_a\":%.2f,\"bat_v\":%.2f,\"bat_a\":%.2f,\"out_pow\":%d,\"bat_per\":%d}",
              solar_voltage, solar_ampere, battery_voltage, battery_ampere, 
-             output_power, battery_percent;
+             output_power, battery_percent);
     server.send(200, "application/json", buf);
   });
 
@@ -654,11 +653,9 @@ int SaveConfig()
   memcpy(&buffer[RunningIndex(sizeof(inverter_off_duration), counter)], &inverter_off_duration, sizeof(inverter_off_duration));
   memcpy(&buffer[RunningIndex(sizeof(inverter_cycle_duration), counter)], &inverter_cycle_duration, sizeof(inverter_cycle_duration));
   memcpy(&buffer[RunningIndex(sizeof(inverter_relay_duration), counter)], &inverter_relay_duration, sizeof(inverter_relay_duration));
-  memcpy(&buffer[RunningIndex(sizeof(relay_overwrite_start), counter)], &relay_overwrite_start, sizeof(relay_overwrite_start));
   memcpy(&buffer[RunningIndex(sizeof(relay_overwrite_duration), counter)], &relay_overwrite_duration, sizeof(relay_overwrite_duration));
 
   memcpy(&buffer[RunningIndex(sizeof(cycle_inverter), counter)], &cycle_inverter, sizeof(cycle_inverter));
-  memcpy(&buffer[RunningIndex(sizeof(relay_overwrite_active), counter)], &relay_overwrite_active, sizeof(relay_overwrite_active));
   memcpy(&buffer[RunningIndex(sizeof(enable_logging), counter)], &enable_logging, sizeof(enable_logging));
 
   config_file.write(buffer, CONFIG_FILE_SIZE);
@@ -681,11 +678,9 @@ int LoadConfig()
   memcpy(&inverter_off_duration, &buffer[RunningIndex(sizeof(inverter_off_duration), counter)], sizeof(inverter_off_duration));
   memcpy(&inverter_cycle_duration, &buffer[RunningIndex(sizeof(inverter_cycle_duration), counter)], sizeof(inverter_cycle_duration));
   memcpy(&inverter_relay_duration, &buffer[RunningIndex(sizeof(inverter_relay_duration), counter)], sizeof(inverter_relay_duration));
-  memcpy(&relay_overwrite_start, &buffer[RunningIndex(sizeof(relay_overwrite_start), counter)], sizeof(relay_overwrite_start));
   memcpy(&relay_overwrite_duration, &buffer[RunningIndex(sizeof(relay_overwrite_duration), counter)], sizeof(relay_overwrite_duration));
 
   memcpy(&cycle_inverter, &buffer[RunningIndex(sizeof(cycle_inverter), counter)], sizeof(cycle_inverter));
-  memcpy(&relay_overwrite_active, &buffer[RunningIndex(sizeof(relay_overwrite_active), counter)], sizeof(relay_overwrite_active));
   memcpy(&enable_logging, &buffer[RunningIndex(sizeof(enable_logging), counter)], sizeof(enable_logging));
 
   return 0;
