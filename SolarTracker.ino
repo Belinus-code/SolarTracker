@@ -404,6 +404,28 @@ void setup() {
     ESP.restart();
   });
 
+  server.on("/api/command", HTTP_POST, []() {
+    if (!server.hasArg("cmd")) {
+      server.send(400, "text/plain", "Kein Befehl angegeben!");
+      return;
+    }
+    
+    String cmd = server.arg("cmd");
+    unsigned long timeoutMs = 3000;
+    if (server.hasArg("timeout")) {
+      timeoutMs = server.arg("timeout").toInt();
+    }
+    char outBuffer[256];
+    outBuffer[0] = '\0';
+    bool success = sendCommandAndWait(cmd.c_str(), outBuffer, timeoutMs);
+    
+    if (success) {
+      server.send(200, "text/plain", String(outBuffer));
+    } else {
+      server.send(500, "text/plain", "Fehler: Timeout, CRC-Fehler oder fehlerhafte Antwort!");
+    }
+  });
+
   auto serveAndLogFile = [](String path) {
     Serial.printf("\n[WEB] >>> Anfrage empfangen für: %s\n", path.c_str());
     

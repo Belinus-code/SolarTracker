@@ -501,6 +501,26 @@
                         </div>
                     </div>
 
+                    <!-- Inverter Terminal -->
+                    <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700 mt-4">
+                        <h3 class="font-medium text-slate-300 mb-2 flex items-center gap-2">
+                            <i data-lucide="terminal" class="w-4 h-4 text-primary"></i> Inverter Konsole
+                        </h3>
+                        <p class="text-sm text-slate-400 mb-4">Sende Roh-Befehle direkt an den Inverter und lese die serielle Antwort aus.</p>
+                        
+                        <div id="terminal-output" class="w-full h-48 bg-black rounded-lg p-3 font-mono text-[11px] sm:text-xs text-green-400 overflow-y-auto mb-3 border border-slate-900 shadow-inner whitespace-pre-wrap">Willkommen in der Inverter-Konsole. Bereit.</div>
+                        
+                        <form onsubmit="sendTerminalCmd(event)" class="flex flex-col sm:flex-row gap-2">
+                            <div class="flex gap-2 flex-1">
+                                <input type="text" id="terminal-input" placeholder="Befehl (z.B. QPI)..." class="flex-1 bg-dark border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary font-mono">
+                                <input type="number" id="terminal-timeout" value="3000" min="100" max="15000" step="100" class="w-24 bg-dark border border-slate-600 rounded-lg px-2 py-2 text-white text-sm focus:outline-none focus:border-primary text-center" title="Timeout in Millisekunden">
+                            </div>
+                            <button type="submit" id="btn-terminal-send" class="bg-primary hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm transition-colors font-medium flex items-center justify-center gap-2">
+                                <i data-lucide="send" class="w-4 h-4"></i> Senden
+                            </button>
+                        </form>
+                    </div>
+
                 </div>
             </div>
         </div>
@@ -756,6 +776,56 @@
             }
         }
 
+        // --- Terminal Funktion ---
+        async function sendTerminalCmd(e) {
+            e.preventDefault();
+            const inputEl = document.getElementById('terminal-input');
+            const timeoutEl = document.getElementById('terminal-timeout');
+            const outputEl = document.getElementById('terminal-output');
+            const btn = document.getElementById('btn-terminal-send');
+            
+            const cmd = inputEl.value.trim();
+            const timeout = timeoutEl.value || "3000";
+            
+            if (!cmd) return;
+            
+            // Eigene Eingabe in Blau anzeigen (mit Timeout-Info)
+            outputEl.innerHTML += `\n<span class="text-blue-400">> ${cmd} <span class="text-slate-500 text-[10px]">[Timeout: ${timeout}ms]</span></span>`;
+            outputEl.scrollTop = outputEl.scrollHeight;
+            
+            inputEl.value = '';
+            btn.disabled = true;
+            btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i>';
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+
+            try {
+                const formData = new FormData();
+                formData.append('cmd', cmd);
+                formData.append('timeout', timeout);
+                
+                const response = await fetch('/api/command', { method: 'POST', body: formData });
+                const responseText = await response.text();
+                
+                if (!response.ok) throw new Error(responseText || `HTTP ${response.status}`);
+                
+                // Antwort vom Inverter in Standard-Grün
+                outputEl.innerHTML += `\n<span class="text-emerald-400">${responseText}</span>`;
+            } catch (error) {
+                if (error.message.includes('Failed to fetch') || window.location.hostname === '') {
+                     outputEl.innerHTML += `\n<span class="text-slate-500">(Demo) Inverter ACK: Befehl '${cmd}' ausgeführt.</span>`;
+                } else {
+                     // Rote Fehlermeldung ausgeben
+                     outputEl.innerHTML += `\n<span class="text-red-400">${error.message}</span>`;
+                }
+            } finally {
+                outputEl.scrollTop = outputEl.scrollHeight;
+                btn.disabled = false;
+                btn.innerHTML = '<i data-lucide="send" class="w-4 h-4"></i> Senden';
+                if (typeof lucide !== 'undefined') lucide.createIcons();
+                inputEl.focus();
+            }
+        }
+
         // --- Live Daten ---
         function updateDashboard(data) {
             const solarPower = data.sol_v * data.sol_a;
@@ -865,6 +935,47 @@
             return `${days}T ${hours}h ${minutes}m`;
         }
 
+        // Helper für Chart.js v2 & v3/v4 Kompatibilität (macht den Code 100% robuster!)
+        function buildChartOptions(yAxesConfigs) {
+            const isV2 = typeof Chart !== 'undefined' && Chart.version && Chart.version.startsWith('2.');
+            if (isV2) {
+                return {
+                    responsive: true, maintainAspectRatio: false, animation: { duration: 0 },
+                    legend: { labels: { fontColor: '#94a3b8', usePointStyle: true, padding: 10 } },
+                    tooltips: { backgroundColor: 'rgba(15, 23, 42, 0.9)', titleFontColor: '#fff', bodyFontColor: '#fff', borderColor: '#334155', borderWidth: 1 },
+                    scales: {
+                        xAxes: [{ gridLines: { color: '#334155', drawBorder: false }, ticks: { fontColor: '#94a3b8', maxTicksLimit: 10 } }],
+                        yAxes: yAxesConfigs.map(c => ({
+                            id: c.id,
+                            position: c.position || 'left',
+                            gridLines: { color: '#334155', drawOnChartArea: c.drawGrid !== false },
+                            ticks: { fontColor: c.color || '#94a3b8', min: c.min, max: c.max, stepSize: c.stepSize, callback: c.callback },
+                            scaleLabel: { display: !!c.title, labelString: c.title, fontColor: c.color || '#94a3b8' }
+                        }))
+                    }
+                };
+            } else {
+                let scales = { x: { grid: { color: '#334155', drawBorder: false }, ticks: { color: '#94a3b8', maxTicksLimit: 10 } } };
+                yAxesConfigs.forEach(c => {
+                    scales[c.id] = {
+                        type: 'linear', position: c.position || 'left',
+                        grid: { color: '#334155', drawOnChartArea: c.drawGrid !== false },
+                        ticks: { color: c.color || '#94a3b8', stepSize: c.stepSize, callback: c.callback },
+                        title: { display: !!c.title, text: c.title, color: c.color || '#94a3b8' },
+                        min: c.min, max: c.max
+                    };
+                });
+                return {
+                    responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { labels: { color: '#94a3b8', usePointStyle: true, padding: 10 } },
+                        tooltip: { backgroundColor: 'rgba(15, 23, 42, 0.9)', titleColor: '#fff', bodyColor: '#fff', borderColor: '#334155', borderWidth: 1 }
+                    },
+                    scales: scales
+                };
+            }
+        }
+
         async function loadHistoryData() {
             // 1. Lade Totals (Lifetime)
             document.getElementById('hist-loading-totals').classList.remove('hidden');
@@ -906,7 +1017,7 @@
                 let buffer = await resRing.arrayBuffer();
                 
                 const view = new DataView(buffer);
-                const currentIndex = view.getUint8(0); // Erstes Byte = Counter/Index
+                const currentIndex = view.getUint8(0) % 144; // Erstes Byte = Counter/Index (abgesichert)
                 const slotSize = 24; // 6 Floats á 4 Bytes
                 
                 let rawSlots = [];
@@ -924,7 +1035,7 @@
                     });
                 }
 
-                // Prüfen ob Slot leer ist (Initial-Status)
+                // Prüfen ob Slot leer/uninitialisiert ist (C++ initialisiert mit bat_volt = 0.0)
                 const isEmpty = (slot) => slot.sol_wh === 0 && slot.char_wh === 0 && slot.dis_wh === 0 && slot.bat_volt === 0;
                 
                 // Ringpuffer chronologisch sortieren (Ältester -> Neuester)
@@ -936,7 +1047,7 @@
                     }
                 }
 
-                // Fallback falls alles leer ist, aber der aktuelle Index gerade den 1. Wert bekommt
+                // Fallback, falls nur der allererste Wert nach Neustart existiert
                 if (orderedSlots.length === 0 && rawSlots.length > 0 && !isEmpty(rawSlots[currentIndex])) {
                     orderedSlots.push(rawSlots[currentIndex]);
                 }
@@ -983,29 +1094,23 @@
 
             if (historyChartInstance) { historyChartInstance.destroy(); }
 
-            const colorSolar = '#facc15', colorCharge = '#34d399', colorDischarge = '#fb923c', colorGrid = '#334155', colorText = '#94a3b8';
+            // rgba statt Hex, verhindert Canvas Error bei älteren Browsern
+            const colorSolar = '#facc15', colorCharge = '#34d399', colorDischarge = '#fb923c';
+            const bgSolar = 'rgba(250, 204, 21, 0.2)'; 
             
-            // Sichtbare Punkte generieren, falls noch extrem wenig Daten geloggt wurden
-            const pRad = actualLen < 30 ? 3 : 0;
+            const pRad = actualLen < 30 ? 3 : 0; // Punkte anzeigen wenn wenig Daten da sind
 
             historyChartInstance = new Chart(ctx, {
                 type: 'line',
                 data: {
                     labels: labels,
                     datasets: [
-                        { label: 'Solarertrag (Wh)', data: sol_wh, borderColor: colorSolar, backgroundColor: colorSolar + '20', borderWidth: 2, fill: true, tension: 0.4, pointRadius: pRad, pointHitRadius: 10 },
-                        { label: 'Ladung (Wh)', data: char_wh, borderColor: colorCharge, borderWidth: 2, borderDash: [5, 5], tension: 0.4, pointRadius: pRad, pointHitRadius: 10 },
-                        { label: 'Entladung (Wh)', data: dis_wh, borderColor: colorDischarge, borderWidth: 2, tension: 0.4, pointRadius: pRad, pointHitRadius: 10 }
+                        { label: 'Solarertrag (Wh)', data: sol_wh, borderColor: colorSolar, backgroundColor: bgSolar, borderWidth: 2, fill: true, tension: 0.4, lineTension: 0.4, pointRadius: pRad, pointHitRadius: 10 },
+                        { label: 'Ladung (Wh)', data: char_wh, borderColor: colorCharge, borderWidth: 2, borderDash: [5, 5], tension: 0.4, lineTension: 0.4, pointRadius: pRad, pointHitRadius: 10 },
+                        { label: 'Entladung (Wh)', data: dis_wh, borderColor: colorDischarge, borderWidth: 2, tension: 0.4, lineTension: 0.4, pointRadius: pRad, pointHitRadius: 10 }
                     ]
                 },
-                options: {
-                    responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
-                    plugins: { legend: { labels: { color: colorText, usePointStyle: true, padding: 20 } }, tooltip: { backgroundColor: 'rgba(15, 23, 42, 0.9)', titleColor: '#fff', bodyColor: '#fff', padding: 10, borderColor: colorGrid, borderWidth: 1 } },
-                    scales: {
-                        x: { grid: { color: colorGrid, drawBorder: false }, ticks: { color: colorText, maxRotation: 0 } },
-                        y: { grid: { color: colorGrid, drawBorder: false }, ticks: { color: colorText }, beginAtZero: true }
-                    }
-                }
+                options: buildChartOptions([{ id: 'y', title: 'Wattstunden (Wh)' }])
             });
         }
 
@@ -1025,6 +1130,11 @@
             }
 
             const numSamples = Math.floor(logDataArray.length / 4);
+            if (numSamples === 0) {
+                document.getElementById('hist-loading-log').classList.add('hidden');
+                return;
+            }
+
             const labels = [];
             const dataSolV = [], dataBatV = [], dataInvStatus = [];
             const dataSolA = [], dataBatA = [];
@@ -1032,7 +1142,7 @@
             globalLogData = [];
             const nowTime = new Date().getTime();
 
-            // Downsampling für Chart (max ~500 Punkte, damit der Browser bei Jahres-Logs nicht abstürzt)
+            // Downsampling für Chart (max ~500 Punkte, schützt vor Browser-Freeze)
             const maxChartPoints = 500;
             const step = Math.max(1, Math.floor(numSamples / maxChartPoints));
 
@@ -1052,15 +1162,15 @@
                 const timeOffset = (numSamples - 1 - i) * 10 * 60 * 1000;
                 const sampleDate = new Date(nowTime - timeOffset);
                 
-                // CSV behält immer 100% aller Daten
+                // CSV speichert ALLE Daten
                 globalLogData.push({
                     date: sampleDate.toLocaleString('de-DE'),
                     sol_v: sol_volt, sol_a: sol_amp, bat_v: bat_volt, bat_a: bat_amp, inv: inverter_on
                 });
 
-                // Chart wird abgetastet (Downsampling), um den Browser zu schonen
+                // Chart bekommt nur reduzierte Datenpunkte
                 if (i % step === 0 || i === numSamples - 1) {
-                    labels.push(sampleDate.toLocaleDateString('de-DE', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }));
+                    labels.push(sampleDate.toLocaleString('de-DE', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }));
                     dataSolV.push(sol_volt);
                     dataBatV.push(bat_volt);
                     dataInvStatus.push(inverter_on ? 1 : 0);
@@ -1072,7 +1182,7 @@
             document.getElementById('hist-loading-log').classList.add('hidden');
             document.getElementById('btn-csv').classList.remove('hidden'); 
             
-            const pRad = labels.length < 30 ? 3 : 0; // Punkte anzeigen wenn < 30 Datenpunkte da sind
+            const pRad = labels.length < 30 ? 3 : 0; 
 
             if (logChartVoltInstance) logChartVoltInstance.destroy();
             logChartVoltInstance = new Chart(document.getElementById('logVoltChart'), {
@@ -1080,20 +1190,15 @@
                 data: {
                     labels: labels,
                     datasets: [
-                        { label: 'Solar Spannung (V)', data: dataSolV, borderColor: '#facc15', borderWidth: 1.5, pointRadius: pRad, tension: 0.1 },
-                        { label: 'Batterie Spannung (V)', data: dataBatV, borderColor: '#34d399', borderWidth: 1.5, pointRadius: pRad, tension: 0.1 },
-                        { label: 'Inverter Status', data: dataInvStatus, borderColor: '#60a5fa', backgroundColor: 'rgba(96, 165, 250, 0.1)', borderWidth: 1, pointRadius: 0, fill: true, stepped: true, yAxisID: 'yInv' }
+                        { label: 'Solar Spannung (V)', data: dataSolV, yAxisID: 'y', borderColor: '#facc15', borderWidth: 1.5, pointRadius: pRad, tension: 0.1, lineTension: 0.1 },
+                        { label: 'Batterie Spannung (V)', data: dataBatV, yAxisID: 'y', borderColor: '#34d399', borderWidth: 1.5, pointRadius: pRad, tension: 0.1, lineTension: 0.1 },
+                        { label: 'Inverter Status', data: dataInvStatus, yAxisID: 'yInv', borderColor: '#60a5fa', backgroundColor: 'rgba(96, 165, 250, 0.1)', borderWidth: 1, pointRadius: 0, fill: true, stepped: true, steppedLine: true }
                     ]
                 },
-                options: {
-                    responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
-                    plugins: { legend: { labels: { color: '#94a3b8', usePointStyle: true, padding: 10 } } },
-                    scales: {
-                        x: { grid: { color: '#334155', drawBorder: false }, ticks: { color: '#94a3b8', maxTicksLimit: 10 } },
-                        y: { grid: { color: '#334155', drawBorder: false }, ticks: { color: '#94a3b8' }, title: { display: true, text: 'Volt (V)', color: '#94a3b8' } },
-                        yInv: { position: 'right', grid: { drawOnChartArea: false }, min: 0, max: 1.2, ticks: { stepSize: 1, callback: function(value) { return value === 1 ? 'An' : value === 0 ? 'Aus' : ''; }, color: '#60a5fa' } }
-                    }
-                }
+                options: buildChartOptions([
+                    { id: 'y', title: 'Volt (V)' },
+                    { id: 'yInv', position: 'right', drawGrid: false, min: 0, max: 1.2, stepSize: 1, color: '#60a5fa', callback: function(val) { return val === 1 ? 'An' : val === 0 ? 'Aus' : ''; } }
+                ])
             });
 
             if (logChartAmpInstance) logChartAmpInstance.destroy();
@@ -1102,18 +1207,11 @@
                 data: {
                     labels: labels,
                     datasets: [
-                        { label: 'Solar Strom (A)', data: dataSolA, borderColor: '#facc15', borderWidth: 1.5, pointRadius: pRad, tension: 0.1, fill: true, backgroundColor: 'rgba(250, 204, 21, 0.1)' },
-                        { label: 'Batterie Strom (A)', data: dataBatA, borderColor: '#fb923c', borderWidth: 1.5, pointRadius: pRad, tension: 0.1, fill: true, backgroundColor: 'rgba(251, 146, 60, 0.1)' }
+                        { label: 'Solar Strom (A)', data: dataSolA, borderColor: '#facc15', borderWidth: 1.5, pointRadius: pRad, tension: 0.1, lineTension: 0.1, fill: true, backgroundColor: 'rgba(250, 204, 21, 0.1)' },
+                        { label: 'Batterie Strom (A)', data: dataBatA, borderColor: '#fb923c', borderWidth: 1.5, pointRadius: pRad, tension: 0.1, lineTension: 0.1, fill: true, backgroundColor: 'rgba(251, 146, 60, 0.1)' }
                     ]
                 },
-                options: {
-                    responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
-                    plugins: { legend: { labels: { color: '#94a3b8', usePointStyle: true, padding: 10 } } },
-                    scales: {
-                        x: { grid: { color: '#334155', drawBorder: false }, ticks: { color: '#94a3b8', maxTicksLimit: 10 } },
-                        y: { grid: { color: '#334155', drawBorder: false }, ticks: { color: '#94a3b8' }, title: { display: true, text: 'Ampere (A)', color: '#94a3b8' } }
-                    }
-                }
+                options: buildChartOptions([{ id: 'y', title: 'Ampere (A)' }])
             });
         }
 
@@ -1123,7 +1221,7 @@
             let csvContent = "Datum / Uhrzeit;Solar Spannung (V);Solar Strom (A);Batterie Spannung (V);Batterie Strom (A);Inverter Last Aktiv\n";
             
             globalLogData.forEach(row => {
-                const formatNum = (num) => num.toFixed(2).replace('.', ',');
+                const formatNum = (num) => (typeof num === 'number' && !isNaN(num)) ? num.toFixed(2).replace('.', ',') : '0,00';
                 csvContent += `${row.date};${formatNum(row.sol_v)};${formatNum(row.sol_a)};${formatNum(row.bat_v)};${formatNum(row.bat_a)};${row.inv ? 'Ja' : 'Nein'}\n`;
             });
 
