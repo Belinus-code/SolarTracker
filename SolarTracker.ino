@@ -3,7 +3,7 @@
 #include <WebServer.h>
 #include <DNSServer.h>
 
-#define CONFIG_FILE_SIZE 26
+#define CONFIG_FILE_SIZE 27
 // ----- Pin Definitions -----
 
 int inverter_voltage_pin = 19;
@@ -134,6 +134,7 @@ bool cycle_inverter = true;           // Cycle Inverter during Night (Always Cyc
 bool relay_overwrite_active = false;
 
 bool enable_logging = false;
+bool enable_sampling = false;
 
 static const uint16_t crc_table[16] = {
   0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50a5, 0x60c6, 0x70e7,
@@ -485,43 +486,29 @@ void Sample()
   if(millis() - last_sample >= sample_cycle)
   {
     last_sample += sample_cycle;
-    // Replace with Serial Reading soon
-    if(!sendCommandAndWait("QPIGS", responseBuffer, 1000))
+    if(!enable_sampling)return;
+    if(sendCommandAndWait("QPIGS", responseBuffer, 1000))
     {
-      return;
+      QPIGS_Data response;
+      parseQPIGS(responseBuffer, response);
+      solar_ampere = response.pvInputCurrent;
+      solar_voltage = response.pvInputVoltage;
+      battery_ampere = (float)(response.batteryChargeCurrent) - (float)(response.batteryDischargeCurrent);
+      battery_voltage = response.batteryVoltage;
+      battery_percent = response.batteryCapacity;
+      output_power = response.outputActivePower;
+
+      Serial.printf("SA: %f, SV: %f, BA: %f, BV: %f\n",solar_ampere, solar_voltage, battery_ampere, battery_voltage);
     }
-    QPIGS_Data response;
-    parseQPIGS(responseBuffer, response);
-    float batteryVoltage;        // Batteriespannung in V
-    uint16_t batteryChargeCurrent; // Batterieladestrom in A
-    uint8_t batteryCapacity;
-    float sol_amp_buf = response.pvInputCurrent;
-    float sol_volt_buf = response.pvInputVoltage;
-    float bat_amp_buf = (float)(response.batteryChargeCurrent) - (float)(response.batteryDischargeCurrent);
-    float bat_volt_buf = response.batteryVoltage;
-
-    Serial.printf("SA: %f, SV: %f, BA: %f, BV: %f\n",
-              sol_amp_buf, sol_volt_buf,
-              bat_amp_buf, bat_volt_buf);
-
+    else Serial.println("Querry Failed!");
+    
     // Accumulating Logging Buffers
 
-    period_solar_amp += sol_amp_buf;
-    period_solar_volt += sol_volt_buf;
-    period_battery_amp += bat_amp_buf;
-    period_battery_volt += bat_volt_buf;
+    period_solar_amp += solar_ampere;
+    period_solar_volt += solar_voltage;
+    period_battery_amp += battery_ampere;
+    period_battery_volt += battery_voltage;
     sample_counter ++;
-
-    // Conversion of Raw-Data
-
-    solar_voltage = sol_volt_buf;
-    battery_voltage = bat_volt_buf;
-
-    solar_ampere = sol_amp_buf;
-    battery_ampere = bat_amp_buf;
-    battery_percent = response.batteryCapacity;
-    output_power = response.outputActivePower;
-
 
     // Analysis for Period Logging
 
@@ -679,6 +666,7 @@ int SaveConfig()
 
   memcpy(&buffer[RunningIndex(sizeof(cycle_inverter), counter)], &cycle_inverter, sizeof(cycle_inverter));
   memcpy(&buffer[RunningIndex(sizeof(enable_logging), counter)], &enable_logging, sizeof(enable_logging));
+  memcpy(&buffer[RunningIndex(sizeof(enable_sampling), counter)], &enable_sampling, sizeof(enable_sampling));
 
   config_file.write(buffer, CONFIG_FILE_SIZE);
   config_file.close();
@@ -704,6 +692,7 @@ int LoadConfig()
 
   memcpy(&cycle_inverter, &buffer[RunningIndex(sizeof(cycle_inverter), counter)], sizeof(cycle_inverter));
   memcpy(&enable_logging, &buffer[RunningIndex(sizeof(enable_logging), counter)], sizeof(enable_logging));
+  memcpy(&enable_sampling, &buffer[RunningIndex(sizeof(enable_sampling), counter)], sizeof(enable_sampling));
 
   return 0;
 }

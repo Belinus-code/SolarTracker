@@ -456,6 +456,10 @@
                                     <input type="checkbox" id="conf_enable_logging" class="rounded border-slate-600 bg-dark text-primary focus:ring-primary w-4 h-4">
                                     Logging aktivieren
                                 </label>
+                                <label class="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                                    <input type="checkbox" id="conf_enable_sampling" class="rounded border-slate-600 bg-dark text-primary focus:ring-primary w-4 h-4">
+                                    Sampling aktivieren
+                                </label>
                                 <div>
                                     <label class="block text-xs text-slate-500 mb-1">Sample Cycle (ms)</label>
                                     <input type="number" id="conf_sample_cycle" class="w-full bg-dark border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
@@ -733,6 +737,7 @@
                 document.getElementById('conf_relay_dur').value = view.getUint32(20, true);
                 document.getElementById('conf_cycle_inverter').checked = view.getUint8(24) !== 0;
                 document.getElementById('conf_enable_logging').checked = view.getUint8(25) !== 0;
+                document.getElementById('conf_enable_sampling').checked = view.getUint8(26) !== 0;
                 
                 isConfigLoaded = true;
             } catch (err) { console.log("Fehler beim Laden der Config", err); }
@@ -746,7 +751,7 @@
             if (typeof lucide !== 'undefined') lucide.createIcons();
 
             try {
-                const buffer = new ArrayBuffer(26);
+                const buffer = new ArrayBuffer(27);
                 const view = new DataView(buffer);
 
                 view.setUint32(0, parseInt(document.getElementById('conf_saving_cycle').value) || 0, true);
@@ -757,6 +762,7 @@
                 view.setUint32(20, parseInt(document.getElementById('conf_relay_dur').value) || 0, true);
                 view.setUint8(24, document.getElementById('conf_cycle_inverter').checked ? 1 : 0);
                 view.setUint8(25, document.getElementById('conf_enable_logging').checked ? 1 : 0);
+                view.setUint8(26, document.getElementById('conf_enable_sampling').checked ? 1 : 0);
 
                 const blob = new Blob([buffer], { type: 'application/octet-stream' });
                 const formData = new FormData();
