@@ -102,6 +102,9 @@
                 <button onclick="switchTab('history')" id="tab-btn-history" class="tab-inactive pb-3 px-1 text-sm font-medium flex items-center gap-2 transition-colors whitespace-nowrap">
                     <i data-lucide="bar-chart-2" class="w-4 h-4"></i> Historie
                 </button>
+                <button onclick="switchTab('inverter')" id="tab-btn-inverter" class="tab-inactive pb-3 px-1 text-sm font-medium flex items-center gap-2 transition-colors whitespace-nowrap">
+                    <i data-lucide="server" class="w-4 h-4"></i> Inverter
+                </button>
                 <button onclick="switchTab('settings')" id="tab-btn-settings" class="tab-inactive pb-3 px-1 text-sm font-medium flex items-center gap-2 transition-colors whitespace-nowrap">
                     <i data-lucide="settings" class="w-4 h-4"></i> Einstellungen
                 </button>
@@ -379,7 +382,466 @@
                     </div>
                 </div>
             </div>
-            
+
+            <!-- Speicherplatz (LittleFS) -->
+            <div class="bg-panel rounded-2xl p-6 border border-slate-700 shadow-xl mt-6">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-xl font-bold flex items-center gap-2">
+                        <i data-lucide="hard-drive" class="w-5 h-5 text-primary"></i> Speicherplatz
+                    </h2>
+                    <span id="hist-loading-fs" class="text-xs text-slate-400 hidden"><i data-lucide="loader" class="w-3 h-3 animate-spin inline"></i> Lade...</span>
+                </div>
+
+                <div class="space-y-4">
+                    <div>
+                        <div class="flex justify-between items-baseline mb-2 text-sm">
+                            <span class="text-slate-400">Belegt: <span id="fs-used" class="text-white font-medium">-</span> von <span id="fs-total" class="text-white font-medium">-</span></span>
+                            <span id="fs-percent" class="text-slate-400 font-medium">-</span>
+                        </div>
+                        <div class="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden border border-slate-700">
+                            <div id="fs-bar" class="h-full bg-primary transition-all duration-500" style="width: 0%"></div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
+                            <span class="text-slate-500 text-xs uppercase tracking-wider block mb-1">Frei</span>
+                            <div class="flex items-baseline gap-1">
+                                <span id="fs-free" class="text-2xl font-bold text-emerald-400">0</span>
+                                <span class="text-slate-400 text-sm">KB</span>
+                            </div>
+                        </div>
+                        <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
+                            <span class="text-slate-500 text-xs uppercase tracking-wider block mb-1">Reicht noch für</span>
+                            <div class="flex items-baseline gap-1">
+                                <span id="fs-remaining" class="text-2xl font-bold text-blue-400">-</span>
+                            </div>
+                            <span class="text-slate-500 text-[10px]">Schätzung: log.bin wächst um 4 Byte / 10 Min</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- ================= TAB: INVERTER ================= -->
+        <div id="tab-inverter" class="hidden space-y-6">
+
+            <!-- Login view (shares the unlocked state with Settings) -->
+            <div id="inverter-login" class="bg-panel rounded-2xl p-6 border border-slate-700 shadow-xl max-w-sm mx-auto text-center mt-10">
+                <div class="inline-flex p-4 bg-slate-800 rounded-full text-slate-400 mb-4">
+                    <i data-lucide="lock" class="w-8 h-8"></i>
+                </div>
+                <h2 class="text-xl font-bold mb-2">Inverter Console Locked</h2>
+                <p class="text-sm text-slate-400 mb-6">Please enter the password to continue.</p>
+
+                <form onsubmit="checkPasswordFor('inverter', event)" class="flex flex-col gap-3">
+                    <input type="password" id="inverter-pw" placeholder="Password" class="w-full bg-dark border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-primary text-center">
+                    <p id="pw-error-inverter" class="text-red-400 text-xs hidden">Wrong password!</p>
+                    <button type="submit" class="w-full bg-primary hover:bg-blue-600 text-white font-medium py-3 rounded-lg transition-colors">Unlock</button>
+                </form>
+            </div>
+
+            <!-- Inverter content -->
+            <div id="inverter-content" class="space-y-6 hidden">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-xl font-bold">Inverter Console</h2>
+                    <button onclick="lockSettings('inverter')" class="text-slate-400 hover:text-white text-sm flex items-center gap-1 transition-colors">
+                        <i data-lucide="lock" class="w-4 h-4"></i> Lock
+                    </button>
+                </div>
+
+                <!-- Live feed -->
+                <div class="bg-panel rounded-2xl p-6 border border-slate-700 shadow-xl">
+                    <h3 class="font-medium text-slate-300 mb-4 flex items-center gap-2">
+                        <i data-lucide="activity" class="w-4 h-4 text-primary"></i> Live Data
+                        <span class="text-xs text-slate-500 font-normal ml-1">updates every 2s, no extra query</span>
+                    </h3>
+                    <div id="inv-live-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 text-sm">
+                        <!-- filled by renderInverterLive() -->
+                    </div>
+                </div>
+
+                <!-- Device identification -->
+                <div class="bg-panel rounded-2xl p-6 border border-slate-700 shadow-xl">
+                    <h3 class="font-medium text-slate-300 mb-4 flex items-center gap-2">
+                        <i data-lucide="info" class="w-4 h-4 text-primary"></i> Device Identification
+                    </h3>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3" id="inv-info-grid">
+                        <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700">
+                            <div class="flex justify-between items-center mb-2">
+                                <h4 class="font-medium text-slate-300 text-sm">Protocol ID</h4>
+                                <button onclick="reloadInverterCard(this, '/inverter/qpi', 'res-qpi', 'err-qpi')" class="bg-slate-700 hover:bg-slate-600 border border-slate-600 px-2.5 py-1 rounded-md text-xs flex items-center gap-1.5 transition-colors font-medium">
+                                    <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Reload
+                                </button>
+                            </div>
+                            <div id="res-qpi" class="text-sm text-slate-500">Not loaded yet.</div>
+                            <p id="err-qpi" class="text-red-400 text-xs mt-1 hidden"></p>
+                        </div>
+                        <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700">
+                            <div class="flex justify-between items-center mb-2">
+                                <h4 class="font-medium text-slate-300 text-sm">Serial Number</h4>
+                                <button onclick="reloadInverterCard(this, '/inverter/qid', 'res-qid', 'err-qid')" class="bg-slate-700 hover:bg-slate-600 border border-slate-600 px-2.5 py-1 rounded-md text-xs flex items-center gap-1.5 transition-colors font-medium">
+                                    <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Reload
+                                </button>
+                            </div>
+                            <div id="res-qid" class="text-sm text-slate-500">Not loaded yet.</div>
+                            <p id="err-qid" class="text-red-400 text-xs mt-1 hidden"></p>
+                        </div>
+                        <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700">
+                            <div class="flex justify-between items-center mb-2">
+                                <h4 class="font-medium text-slate-300 text-sm">Serial Number (Extended)</h4>
+                                <button onclick="reloadInverterCard(this, '/inverter/qsid', 'res-qsid', 'err-qsid')" class="bg-slate-700 hover:bg-slate-600 border border-slate-600 px-2.5 py-1 rounded-md text-xs flex items-center gap-1.5 transition-colors font-medium">
+                                    <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Reload
+                                </button>
+                            </div>
+                            <div id="res-qsid" class="text-sm text-slate-500">Not loaded yet.</div>
+                            <p id="err-qsid" class="text-red-400 text-xs mt-1 hidden"></p>
+                        </div>
+                        <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700">
+                            <div class="flex justify-between items-center mb-2">
+                                <h4 class="font-medium text-slate-300 text-sm">Main Firmware Version</h4>
+                                <button onclick="reloadInverterCard(this, '/inverter/qvfw', 'res-qvfw', 'err-qvfw')" class="bg-slate-700 hover:bg-slate-600 border border-slate-600 px-2.5 py-1 rounded-md text-xs flex items-center gap-1.5 transition-colors font-medium">
+                                    <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Reload
+                                </button>
+                            </div>
+                            <div id="res-qvfw" class="text-sm text-slate-500">Not loaded yet.</div>
+                            <p id="err-qvfw" class="text-red-400 text-xs mt-1 hidden"></p>
+                        </div>
+                        <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700">
+                            <div class="flex justify-between items-center mb-2">
+                                <h4 class="font-medium text-slate-300 text-sm">SCC Firmware Version</h4>
+                                <button onclick="reloadInverterCard(this, '/inverter/qvfw2', 'res-qvfw2', 'err-qvfw2')" class="bg-slate-700 hover:bg-slate-600 border border-slate-600 px-2.5 py-1 rounded-md text-xs flex items-center gap-1.5 transition-colors font-medium">
+                                    <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Reload
+                                </button>
+                            </div>
+                            <div id="res-qvfw2" class="text-sm text-slate-500">Not loaded yet.</div>
+                            <p id="err-qvfw2" class="text-red-400 text-xs mt-1 hidden"></p>
+                        </div>
+                        <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700">
+                            <div class="flex justify-between items-center mb-2">
+                                <h4 class="font-medium text-slate-300 text-sm">Model Name</h4>
+                                <button onclick="reloadInverterCard(this, '/inverter/qmn', 'res-qmn', 'err-qmn')" class="bg-slate-700 hover:bg-slate-600 border border-slate-600 px-2.5 py-1 rounded-md text-xs flex items-center gap-1.5 transition-colors font-medium">
+                                    <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Reload
+                                </button>
+                            </div>
+                            <div id="res-qmn" class="text-sm text-slate-500">Not loaded yet.</div>
+                            <p id="err-qmn" class="text-red-400 text-xs mt-1 hidden"></p>
+                        </div>
+                        <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700">
+                            <div class="flex justify-between items-center mb-2">
+                                <h4 class="font-medium text-slate-300 text-sm">General Model Code</h4>
+                                <button onclick="reloadInverterCard(this, '/inverter/qgmn', 'res-qgmn', 'err-qgmn')" class="bg-slate-700 hover:bg-slate-600 border border-slate-600 px-2.5 py-1 rounded-md text-xs flex items-center gap-1.5 transition-colors font-medium">
+                                    <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Reload
+                                </button>
+                            </div>
+                            <div id="res-qgmn" class="text-sm text-slate-500">Not loaded yet.</div>
+                            <p id="err-qgmn" class="text-red-400 text-xs mt-1 hidden"></p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Status & mode -->
+                <div class="bg-panel rounded-2xl p-6 border border-slate-700 shadow-xl">
+                    <h3 class="font-medium text-slate-300 mb-4 flex items-center gap-2">
+                        <i data-lucide="gauge" class="w-4 h-4 text-primary"></i> Status &amp; Mode
+                    </h3>
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                        <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700">
+                            <div class="flex justify-between items-center mb-2">
+                                <h4 class="font-medium text-slate-300 text-sm">Device Mode</h4>
+                                <button onclick="reloadInverterCard(this, '/inverter/qmod', 'res-qmod', 'err-qmod')" class="bg-slate-700 hover:bg-slate-600 border border-slate-600 px-2.5 py-1 rounded-md text-xs flex items-center gap-1.5 transition-colors font-medium">
+                                    <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Reload
+                                </button>
+                            </div>
+                            <div id="res-qmod" class="text-sm text-slate-500">Not loaded yet.</div>
+                            <p id="err-qmod" class="text-red-400 text-xs mt-1 hidden"></p>
+                        </div>
+                        <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700 lg:col-span-2">
+                            <div class="flex justify-between items-center mb-2">
+                                <h4 class="font-medium text-slate-300 text-sm">Warnings &amp; Faults</h4>
+                                <button onclick="reloadInverterCard(this, '/inverter/qpiws', 'res-qpiws', 'err-qpiws')" class="bg-slate-700 hover:bg-slate-600 border border-slate-600 px-2.5 py-1 rounded-md text-xs flex items-center gap-1.5 transition-colors font-medium">
+                                    <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Reload
+                                </button>
+                            </div>
+                            <div id="res-qpiws" class="text-sm text-slate-500">Not loaded yet.</div>
+                            <p id="err-qpiws" class="text-red-400 text-xs mt-1 hidden"></p>
+                        </div>
+                        <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700 lg:col-span-3">
+                            <div class="flex justify-between items-center mb-2 gap-2">
+                                <h4 class="font-medium text-slate-300 text-sm">Parallel Info</h4>
+                                <div class="flex items-center gap-2">
+                                    <label class="text-xs text-slate-500">Unit</label>
+                                    <input type="number" id="inv-qpgsn-unit" value="1" min="1" max="9" class="w-16 bg-dark border border-slate-600 rounded-md px-2 py-1 text-white text-xs focus:outline-none focus:border-primary text-center">
+                                    <button onclick="reloadInverterCard(this, '/inverter/qpgsn?unit=' + document.getElementById('inv-qpgsn-unit').value, 'res-qpgsn', 'err-qpgsn')" class="bg-slate-700 hover:bg-slate-600 border border-slate-600 px-2.5 py-1 rounded-md text-xs flex items-center gap-1.5 transition-colors font-medium">
+                                        <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Reload
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="res-qpgsn" class="text-sm text-slate-500">Not loaded yet.</div>
+                            <p id="err-qpgsn" class="text-red-400 text-xs mt-1 hidden"></p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Device flags -->
+                <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700">
+                    <div class="flex justify-between items-center mb-3 flex-wrap gap-2">
+                        <h3 class="font-medium text-slate-300 flex items-center gap-2">
+                            <i data-lucide="flag" class="w-4 h-4 text-primary"></i> Device Flags
+                        </h3>
+                        <div class="flex items-center gap-2">
+                            <button onclick="reloadFlags(this)" class="bg-slate-700 hover:bg-slate-600 border border-slate-600 px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5 transition-colors font-medium">
+                                <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Reload
+                            </button>
+                            <button onclick="applyFlags(this)" class="bg-primary hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5 transition-colors font-medium">
+                                <i data-lucide="check" class="w-3.5 h-3.5"></i> Apply
+                            </button>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
+                        <label class="flex items-center gap-2 text-sm text-slate-300 cursor-pointer"><input type="checkbox" id="inv-flag-silenceBuzzer" class="rounded border-slate-600 bg-dark text-primary focus:ring-primary w-4 h-4"> Silence Buzzer</label>
+                        <label class="flex items-center gap-2 text-sm text-slate-300 cursor-pointer"><input type="checkbox" id="inv-flag-overloadBypass" class="rounded border-slate-600 bg-dark text-primary focus:ring-primary w-4 h-4"> Overload Bypass</label>
+                        <label class="flex items-center gap-2 text-sm text-slate-300 cursor-pointer"><input type="checkbox" id="inv-flag-lcdEscapeToDefault" class="rounded border-slate-600 bg-dark text-primary focus:ring-primary w-4 h-4"> LCD Escape to Default</label>
+                        <label class="flex items-center gap-2 text-sm text-slate-300 cursor-pointer"><input type="checkbox" id="inv-flag-overloadRestart" class="rounded border-slate-600 bg-dark text-primary focus:ring-primary w-4 h-4"> Overload Restart</label>
+                        <label class="flex items-center gap-2 text-sm text-slate-300 cursor-pointer"><input type="checkbox" id="inv-flag-overTemperatureRestart" class="rounded border-slate-600 bg-dark text-primary focus:ring-primary w-4 h-4"> Over Temperature Restart</label>
+                        <label class="flex items-center gap-2 text-sm text-slate-300 cursor-pointer"><input type="checkbox" id="inv-flag-backlightOn" class="rounded border-slate-600 bg-dark text-primary focus:ring-primary w-4 h-4"> Backlight On</label>
+                        <label class="flex items-center gap-2 text-sm text-slate-300 cursor-pointer"><input type="checkbox" id="inv-flag-alarmOnPrimarySourceInterrupt" class="rounded border-slate-600 bg-dark text-primary focus:ring-primary w-4 h-4"> Alarm on Primary Source Interrupt</label>
+                        <label class="flex items-center gap-2 text-sm text-slate-300 cursor-pointer"><input type="checkbox" id="inv-flag-faultCodeRecord" class="rounded border-slate-600 bg-dark text-primary focus:ring-primary w-4 h-4"> Fault Code Record</label>
+                    </div>
+                    <p id="err-flags" class="text-red-400 text-xs mt-2 hidden"></p>
+                    <p id="msg-flags" class="text-emerald-400 text-xs mt-2 hidden"></p>
+                </div>
+
+                <!-- Battery equalization -->
+                <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700">
+                    <div class="flex justify-between items-center mb-3 flex-wrap gap-2">
+                        <h3 class="font-medium text-slate-300 flex items-center gap-2">
+                            <i data-lucide="battery-charging" class="w-4 h-4 text-primary"></i> Battery Equalization
+                        </h3>
+                        <button onclick="reloadEqualization(this)" class="bg-slate-700 hover:bg-slate-600 border border-slate-600 px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5 transition-colors font-medium">
+                            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Reload
+                        </button>
+                    </div>
+                    <p id="err-qbeqi" class="text-red-400 text-xs mb-2 hidden"></p>
+                    <div id="inv-qbeqi-readonly" class="text-xs text-slate-500 mb-3">Not loaded yet.</div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div class="flex items-end gap-2">
+                            <label class="flex items-center gap-2 text-sm text-slate-300 cursor-pointer flex-1">
+                                <input type="checkbox" id="inv-pbeqe" class="rounded border-slate-600 bg-dark text-primary focus:ring-primary w-4 h-4"> Equalization Enabled
+                            </label>
+                            <button onclick="applyInverterSetting(this, '/inverter/pbeqe?enabled=' + (document.getElementById('inv-pbeqe').checked ? 1 : 0), 'err-pbeqe')" class="bg-primary hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap">Apply</button>
+                        </div>
+                        <p id="err-pbeqe" class="text-red-400 text-xs hidden md:col-span-2"></p>
+
+                        <div>
+                            <label class="block text-xs text-slate-500 mb-1">Equalization Time (min)</label>
+                            <div class="flex gap-2">
+                                <input type="number" id="inv-pbeqt" class="flex-1 bg-dark border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                                <button onclick="applyInverterSetting(this, '/inverter/pbeqt?minutes=' + document.getElementById('inv-pbeqt').value, 'err-pbeqt')" class="bg-primary hover:bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-medium">Apply</button>
+                            </div>
+                            <p id="err-pbeqt" class="text-red-400 text-xs mt-1 hidden"></p>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs text-slate-500 mb-1">Equalization Period (days)</label>
+                            <div class="flex gap-2">
+                                <input type="number" id="inv-pbeqp" class="flex-1 bg-dark border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                                <button onclick="applyInverterSetting(this, '/inverter/pbeqp?days=' + document.getElementById('inv-pbeqp').value, 'err-pbeqp')" class="bg-primary hover:bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-medium">Apply</button>
+                            </div>
+                            <p id="err-pbeqp" class="text-red-400 text-xs mt-1 hidden"></p>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs text-slate-500 mb-1">Equalization Voltage (V)</label>
+                            <div class="flex gap-2">
+                                <input type="number" step="0.01" id="inv-pbeqv" class="flex-1 bg-dark border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                                <button onclick="applyInverterSetting(this, '/inverter/pbeqv?voltage=' + document.getElementById('inv-pbeqv').value, 'err-pbeqv')" class="bg-primary hover:bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-medium">Apply</button>
+                            </div>
+                            <p id="err-pbeqv" class="text-red-400 text-xs mt-1 hidden"></p>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs text-slate-500 mb-1">Equalization Over Time (min)</label>
+                            <div class="flex gap-2">
+                                <input type="number" id="inv-pbeqot" class="flex-1 bg-dark border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                                <button onclick="applyInverterSetting(this, '/inverter/pbeqot?minutes=' + document.getElementById('inv-pbeqot').value, 'err-pbeqot')" class="bg-primary hover:bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-medium">Apply</button>
+                            </div>
+                            <p id="err-pbeqot" class="text-red-400 text-xs mt-1 hidden"></p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Charging currents -->
+                <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700">
+                    <h3 class="font-medium text-slate-300 mb-3 flex items-center gap-2">
+                        <i data-lucide="zap" class="w-4 h-4 text-primary"></i> Charging Currents
+                    </h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs text-slate-500 mb-1">Max Charging Current (A)</label>
+                            <div class="flex gap-2">
+                                <select id="inv-mnchgc" class="flex-1 bg-dark border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                                    <option value="">- load first -</option>
+                                </select>
+                                <button onclick="reloadChargingOptions(this, '/inverter/qmchgcr', 'inv-mnchgc', 'err-mnchgc')" class="bg-slate-700 hover:bg-slate-600 border border-slate-600 px-3 py-2 rounded-lg text-xs font-medium"><i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i></button>
+                                <button onclick="applyInverterSetting(this, '/inverter/mnchgc?amps=' + document.getElementById('inv-mnchgc').value, 'err-mnchgc')" class="bg-primary hover:bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-medium">Apply</button>
+                            </div>
+                            <p id="err-mnchgc" class="text-red-400 text-xs mt-1 hidden"></p>
+                        </div>
+                        <div>
+                            <label class="block text-xs text-slate-500 mb-1">Max Utility Charging Current (A)</label>
+                            <div class="flex gap-2">
+                                <select id="inv-muchgc" class="flex-1 bg-dark border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                                    <option value="">- load first -</option>
+                                </select>
+                                <button onclick="reloadChargingOptions(this, '/inverter/qmuchgcr', 'inv-muchgc', 'err-muchgc')" class="bg-slate-700 hover:bg-slate-600 border border-slate-600 px-3 py-2 rounded-lg text-xs font-medium"><i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i></button>
+                                <button onclick="applyInverterSetting(this, '/inverter/muchgc?amps=' + document.getElementById('inv-muchgc').value, 'err-muchgc')" class="bg-primary hover:bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-medium">Apply</button>
+                            </div>
+                            <p id="err-muchgc" class="text-red-400 text-xs mt-1 hidden"></p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Inverter rating & settings -->
+                <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700">
+                    <div class="flex justify-between items-center mb-3 flex-wrap gap-2">
+                        <h3 class="font-medium text-slate-300 flex items-center gap-2">
+                            <i data-lucide="sliders" class="w-4 h-4 text-primary"></i> Inverter Rating &amp; Settings
+                        </h3>
+                        <button onclick="reloadRatingInfo(this)" class="bg-slate-700 hover:bg-slate-600 border border-slate-600 px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5 transition-colors font-medium">
+                            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Reload
+                        </button>
+                    </div>
+                    <p id="err-qpiri" class="text-red-400 text-xs mb-2 hidden"></p>
+                    <div id="inv-qpiri-readonly" class="text-xs text-slate-500 mb-3">Not loaded yet.</div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs text-slate-500 mb-1">Output Source Priority</label>
+                            <div class="flex gap-2">
+                                <select id="inv-pop" class="flex-1 bg-dark border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                                    <option value="0">Utility First</option>
+                                    <option value="1">Solar First</option>
+                                    <option value="2">SBU First</option>
+                                </select>
+                                <button onclick="applyInverterSetting(this, '/inverter/pop?value=' + document.getElementById('inv-pop').value, 'err-pop')" class="bg-primary hover:bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-medium">Apply</button>
+                            </div>
+                            <p id="err-pop" class="text-red-400 text-xs mt-1 hidden"></p>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs text-slate-500 mb-1">Charger Source Priority</label>
+                            <div class="flex gap-2">
+                                <select id="inv-pcp" class="flex-1 bg-dark border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                                    <option value="0">Utility First</option>
+                                    <option value="1">Solar First</option>
+                                    <option value="2">Solar + Utility</option>
+                                    <option value="3">Solar Only</option>
+                                </select>
+                                <button onclick="applyInverterSetting(this, '/inverter/pcp?value=' + document.getElementById('inv-pcp').value, 'err-pcp')" class="bg-primary hover:bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-medium">Apply</button>
+                            </div>
+                            <p id="err-pcp" class="text-red-400 text-xs mt-1 hidden"></p>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs text-slate-500 mb-1">Grid Working Range</label>
+                            <div class="flex gap-2">
+                                <select id="inv-pgr" class="flex-1 bg-dark border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                                    <option value="0">Appliance</option>
+                                    <option value="1">UPS</option>
+                                </select>
+                                <button onclick="applyInverterSetting(this, '/inverter/pgr?value=' + document.getElementById('inv-pgr').value, 'err-pgr')" class="bg-primary hover:bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-medium">Apply</button>
+                            </div>
+                            <p id="err-pgr" class="text-red-400 text-xs mt-1 hidden"></p>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs text-slate-500 mb-1">Battery Type</label>
+                            <div class="flex gap-2">
+                                <select id="inv-pbt" class="flex-1 bg-dark border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                                    <option value="0">AGM</option>
+                                    <option value="1">Flooded</option>
+                                    <option value="2">User</option>
+                                    <option value="3">Pylontech</option>
+                                    <option value="4">Shinheung</option>
+                                    <option value="5">Weco</option>
+                                    <option value="6">Soltaro</option>
+                                </select>
+                                <button onclick="applyInverterSetting(this, '/inverter/pbt?value=' + document.getElementById('inv-pbt').value, 'err-pbt')" class="bg-primary hover:bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-medium">Apply</button>
+                            </div>
+                            <p id="err-pbt" class="text-red-400 text-xs mt-1 hidden"></p>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs text-slate-500 mb-1">Battery Recharge Voltage (V) <span class="text-slate-600">(output turns back on above this)</span></label>
+                            <div class="flex gap-2">
+                                <input type="number" step="0.1" id="inv-pbcv" class="flex-1 bg-dark border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                                <button onclick="applyInverterSetting(this, '/inverter/pbcv?voltage=' + document.getElementById('inv-pbcv').value, 'err-pbcv')" class="bg-primary hover:bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-medium">Apply</button>
+                            </div>
+                            <p id="err-pbcv" class="text-red-400 text-xs mt-1 hidden"></p>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs text-slate-500 mb-1">Battery Cut-off Voltage (V) <span class="text-slate-600">(output turns off below this)</span></label>
+                            <div class="flex gap-2">
+                                <input type="number" step="0.1" id="inv-psdv" class="flex-1 bg-dark border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                                <button onclick="applyInverterSetting(this, '/inverter/psdv?voltage=' + document.getElementById('inv-psdv').value, 'err-psdv')" class="bg-primary hover:bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-medium">Apply</button>
+                            </div>
+                            <p id="err-psdv" class="text-red-400 text-xs mt-1 hidden"></p>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs text-slate-500 mb-1">Battery C.V. Charging Voltage (V)</label>
+                            <div class="flex gap-2">
+                                <input type="number" step="0.1" id="inv-pcvv" class="flex-1 bg-dark border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                                <button onclick="applyInverterSetting(this, '/inverter/pcvv?voltage=' + document.getElementById('inv-pcvv').value, 'err-pcvv')" class="bg-primary hover:bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-medium">Apply</button>
+                            </div>
+                            <p id="err-pcvv" class="text-red-400 text-xs mt-1 hidden"></p>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs text-slate-500 mb-1">Battery Float Charging Voltage (V)</label>
+                            <div class="flex gap-2">
+                                <input type="number" step="0.1" id="inv-pbft" class="flex-1 bg-dark border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                                <button onclick="applyInverterSetting(this, '/inverter/pbft?voltage=' + document.getElementById('inv-pbft').value, 'err-pbft')" class="bg-primary hover:bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-medium">Apply</button>
+                            </div>
+                            <p id="err-pbft" class="text-red-400 text-xs mt-1 hidden"></p>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs text-slate-500 mb-1">Max Charging Time at C.V. (min)</label>
+                            <div class="flex gap-2">
+                                <input type="number" id="inv-pcvt" class="flex-1 bg-dark border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                                <button onclick="applyInverterSetting(this, '/inverter/pcvt?minutes=' + document.getElementById('inv-pcvt').value, 'err-pcvt')" class="bg-primary hover:bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-medium">Apply</button>
+                            </div>
+                            <p id="err-pcvt" class="text-red-400 text-xs mt-1 hidden"></p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Default settings / factory reset -->
+                <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700">
+                    <div class="flex justify-between items-center mb-3 flex-wrap gap-2">
+                        <h3 class="font-medium text-slate-300 flex items-center gap-2">
+                            <i data-lucide="rotate-ccw" class="w-4 h-4 text-primary"></i> Default Settings / Factory Reset
+                        </h3>
+                        <div class="flex items-center gap-2">
+                            <button onclick="reloadInverterCard(this, '/inverter/qdi', 'res-qdi', 'err-qdi')" class="bg-slate-700 hover:bg-slate-600 border border-slate-600 px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5 transition-colors font-medium">
+                                <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Reload
+                            </button>
+                            <button onclick="confirmFactoryReset()" class="bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/30 px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5 transition-colors font-medium">
+                                <i data-lucide="alert-triangle" class="w-3.5 h-3.5"></i> Factory Reset
+                            </button>
+                        </div>
+                    </div>
+                    <div id="res-qdi" class="text-sm text-slate-500">Not loaded yet.</div>
+                    <p id="err-qdi" class="text-red-400 text-xs mt-1 hidden"></p>
+                    <p id="err-pf" class="text-red-400 text-xs mt-2 hidden"></p>
+                </div>
+
+            </div>
         </div>
 
         <!-- ================= TAB: EINSTELLUNGEN ================= -->
@@ -393,7 +855,7 @@
                 <h2 class="text-xl font-bold mb-2">Einstellungen gesperrt</h2>
                 <p class="text-sm text-slate-400 mb-6">Bitte Passwort eingeben, um fortzufahren.</p>
                 
-                <form onsubmit="checkPassword(event)" class="flex flex-col gap-3">
+                <form onsubmit="checkPasswordFor('settings', event)" class="flex flex-col gap-3">
                     <input type="password" id="settings-pw" placeholder="Passwort" class="w-full bg-dark border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-primary text-center">
                     <p id="pw-error" class="text-red-400 text-xs hidden">Falsches Passwort!</p>
                     <button type="submit" class="w-full bg-primary hover:bg-blue-600 text-white font-medium py-3 rounded-lg transition-colors">Entsperren</button>
@@ -437,7 +899,25 @@
                         </div>
                         <div id="system-msg" class="text-sm font-medium mt-3 hidden transition-opacity text-center"></div>
                     </div>
-                    
+
+                    <!-- Wartungsmodus -->
+                    <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700 mt-4">
+                        <h3 class="font-medium text-slate-300 mb-2 flex items-center gap-2">
+                            <i data-lucide="wrench" class="w-4 h-4 text-primary"></i> Wartungsmodus
+                        </h3>
+                        <p class="text-sm text-slate-400 mb-4">Vor einem Neuflashen oder längerem Abschalten: "Wartung starten" verankert die aktuelle Uhrzeit am letzten Log-Eintrag und pausiert das Speichern. "Wartung beenden" (nach dem Neustart) reaktiviert das Speichern und verankert den nächsten Eintrag - so bleibt die Lücke dazwischen zeitlich sauber markiert.</p>
+
+                        <div class="flex flex-col sm:flex-row flex-wrap gap-3">
+                            <button onclick="startMaintenance()" id="btn-maint-start" class="bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/30 px-4 py-2 rounded-lg flex items-center justify-center gap-2 transition-colors font-medium text-sm flex-1">
+                                <i data-lucide="pause" class="w-4 h-4"></i> Wartung starten
+                            </button>
+                            <button onclick="endMaintenance()" id="btn-maint-end" class="bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/30 px-4 py-2 rounded-lg flex items-center justify-center gap-2 transition-colors font-medium text-sm flex-1">
+                                <i data-lucide="play" class="w-4 h-4"></i> Wartung beenden
+                            </button>
+                        </div>
+                        <div id="maint-msg" class="text-sm font-medium mt-3 hidden transition-opacity text-center"></div>
+                    </div>
+
                     <!-- Konfigurationswerte -->
                     <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700 mt-4">
                         <div class="flex justify-between items-center mb-4">
@@ -534,12 +1014,12 @@
             <div class="bg-panel border border-slate-700 rounded-2xl p-6 max-w-sm w-full mx-4 shadow-2xl transform scale-95 transition-transform duration-300" id="confirm-modal-box">
                 <div class="flex items-center gap-3 text-red-400 mb-4">
                     <div class="p-2 bg-red-500/10 rounded-full"><i data-lucide="alert-triangle" class="w-6 h-6"></i></div>
-                    <h3 class="text-lg font-bold">Logs wirklich löschen?</h3>
+                    <h3 class="text-lg font-bold" id="confirm-modal-title">Logs wirklich löschen?</h3>
                 </div>
-                <p class="text-sm text-slate-300 mb-6">Bist du sicher? Alle historischen Aufzeichnungen und Statistiken (log.bin, totals.bin, ring.bin) werden unwiderruflich vom ESP32 gelöscht!</p>
+                <p class="text-sm text-slate-300 mb-6" id="confirm-modal-body">Bist du sicher? Alle historischen Aufzeichnungen und Statistiken (log.bin, totals.bin, ring.bin) werden unwiderruflich vom ESP32 gelöscht!</p>
                 <div class="flex justify-end gap-3">
                     <button onclick="hideResetModal()" class="px-4 py-2 rounded-lg text-sm font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 transition-colors">Abbrechen</button>
-                    <button onclick="resetLogs()" id="btn-confirm-reset" class="px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-500 transition-colors flex items-center gap-2">
+                    <button onclick="confirmModalAction()" id="btn-confirm-reset" class="px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-500 transition-colors flex items-center gap-2">
                         <i data-lucide="trash-2" class="w-4 h-4"></i> Ja, löschen
                     </button>
                 </div>
@@ -564,9 +1044,10 @@
         function switchTab(tabId) {
             document.getElementById('tab-live').classList.add('hidden');
             document.getElementById('tab-history').classList.add('hidden');
+            document.getElementById('tab-inverter').classList.add('hidden');
             document.getElementById('tab-settings').classList.add('hidden');
-            
-            ['live', 'history', 'settings'].forEach(id => {
+
+            ['live', 'history', 'inverter', 'settings'].forEach(id => {
                 const btn = document.getElementById('tab-btn-' + id);
                 btn.classList.remove('tab-active');
                 btn.classList.add('tab-inactive');
@@ -581,48 +1062,55 @@
                 loadHistoryData();
                 isHistoryLoaded = true;
             }
-            
-            if (tabId === 'settings') {
+
+            // Inverter und Einstellungen teilen sich dieselbe Passwortsperre -
+            // einmal entsperrt gilt für beide Tabs für den Rest der Session.
+            if (tabId === 'settings' || tabId === 'inverter') {
+                const loginId = tabId === 'settings' ? 'settings-login' : 'inverter-login';
+                const contentId = tabId === 'settings' ? 'settings-content' : 'inverter-content';
+                const pwInputId = tabId === 'settings' ? 'settings-pw' : 'inverter-pw';
+                const pwErrorId = tabId === 'settings' ? 'pw-error' : 'pw-error-inverter';
                 if (isSettingsUnlocked) {
-                    document.getElementById('settings-login').classList.add('hidden');
-                    document.getElementById('settings-content').classList.remove('hidden');
-                    if (!isConfigLoaded) loadConfig();
+                    document.getElementById(loginId).classList.add('hidden');
+                    document.getElementById(contentId).classList.remove('hidden');
+                    if (tabId === 'settings' && !isConfigLoaded) loadConfig();
                 } else {
-                    document.getElementById('settings-login').classList.remove('hidden');
-                    document.getElementById('settings-content').classList.add('hidden');
-                    document.getElementById('pw-error').classList.add('hidden');
-                    document.getElementById('settings-pw').value = ''; 
+                    document.getElementById(loginId).classList.remove('hidden');
+                    document.getElementById(contentId).classList.add('hidden');
+                    document.getElementById(pwErrorId).classList.add('hidden');
+                    document.getElementById(pwInputId).value = '';
                 }
             }
         }
         
         // --- Auth & System Functions ---
-        function checkPassword(e) {
+        // Inverter- und Einstellungen-Tab teilen sich dasselbe Passwort/denselben
+        // Entsperrt-Status - einmal eingeben reicht für beide.
+        function checkPasswordFor(tabId, e) {
             e.preventDefault();
-            const pw = document.getElementById('settings-pw').value;
+            const pwInputId = tabId === 'settings' ? 'settings-pw' : 'inverter-pw';
+            const pwErrorId = tabId === 'settings' ? 'pw-error' : 'pw-error-inverter';
+            const pw = document.getElementById(pwInputId).value;
             if (pw === 'hardy') {
                 isSettingsUnlocked = true;
                 sessionStorage.setItem('solar_auth', 'true');
-                document.getElementById('settings-login').classList.add('hidden');
-                document.getElementById('settings-content').classList.remove('hidden');
-                document.getElementById('pw-error').classList.add('hidden');
-                if (!isConfigLoaded) loadConfig();
+                switchTab(tabId);
             } else {
-                document.getElementById('pw-error').classList.remove('hidden');
-                const input = document.getElementById('settings-pw');
+                document.getElementById(pwErrorId).classList.remove('hidden');
+                const input = document.getElementById(pwInputId);
                 input.classList.add('border-red-500');
                 setTimeout(() => input.classList.remove('border-red-500'), 1500);
             }
         }
 
-        function lockSettings() {
+        function lockSettings(tabId = 'settings') {
             isSettingsUnlocked = false;
             sessionStorage.removeItem('solar_auth');
-            switchTab('settings');
+            switchTab(tabId);
         }
 
-        function showSystemMsg(text, type = 'success') {
-            const msg = document.getElementById('system-msg');
+        function showSystemMsg(text, type = 'success', elementId = 'system-msg') {
+            const msg = document.getElementById(elementId);
             msg.textContent = text;
             msg.className = `text-sm font-medium mt-3 transition-opacity text-center ${type === 'error' ? 'text-red-400' : 'text-emerald-400'}`;
             msg.classList.remove('hidden');
@@ -679,11 +1167,84 @@
             }
         }
 
-        function showResetModal() {
+        async function startMaintenance() {
+            const btn = document.getElementById('btn-maint-start');
+            const originalHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.classList.add('opacity-50', 'cursor-not-allowed');
+            btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> Starte...';
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+
+            try {
+                // Date.now() liest nur die lokale Systemuhr - braucht kein Internet.
+                const response = await fetch('/maintenance/start?epoch=' + Math.floor(Date.now() / 1000));
+                if (!response.ok) throw new Error('Netzwerk-Fehler');
+                const responseText = await response.text();
+                showSystemMsg(responseText || 'Wartungsmodus aktiv.', 'success', 'maint-msg');
+            } catch (error) {
+                console.log("Fehler beim Starten des Wartungsmodus:", error);
+                showSystemMsg('Fehler beim Senden (ESP offline?)', 'error', 'maint-msg');
+            } finally {
+                btn.innerHTML = originalHtml;
+                btn.disabled = false;
+                btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                if (typeof lucide !== 'undefined') lucide.createIcons();
+            }
+        }
+
+        async function endMaintenance() {
+            const btn = document.getElementById('btn-maint-end');
+            const originalHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.classList.add('opacity-50', 'cursor-not-allowed');
+            btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> Beende...';
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+
+            try {
+                const response = await fetch('/maintenance/end?epoch=' + Math.floor(Date.now() / 1000));
+                if (!response.ok) throw new Error('Netzwerk-Fehler');
+                const responseText = await response.text();
+                showSystemMsg(responseText || 'Wartungsmodus beendet.', 'success', 'maint-msg');
+            } catch (error) {
+                console.log("Fehler beim Beenden des Wartungsmodus:", error);
+                showSystemMsg('Fehler beim Senden (ESP offline?)', 'error', 'maint-msg');
+            } finally {
+                btn.innerHTML = originalHtml;
+                btn.disabled = false;
+                btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                if (typeof lucide !== 'undefined') lucide.createIcons();
+            }
+        }
+
+        // Generic confirm modal - showResetModal() below feeds it the
+        // "Logs löschen" content unchanged; other actions (e.g. the
+        // Inverter tab's Werksreset) call showConfirmModal() directly.
+        let pendingConfirmAction = null;
+
+        function showConfirmModal(title, bodyText, onConfirm, confirmLabel, confirmIcon) {
+            document.getElementById('confirm-modal-title').textContent = title;
+            document.getElementById('confirm-modal-body').textContent = bodyText;
+            const confirmBtn = document.getElementById('btn-confirm-reset');
+            confirmBtn.innerHTML = `<i data-lucide="${confirmIcon || 'check'}" class="w-4 h-4"></i> ${confirmLabel || 'Ja, fortfahren'}`;
+            pendingConfirmAction = onConfirm;
+
             const modal = document.getElementById('confirm-modal');
             const box = document.getElementById('confirm-modal-box');
             modal.classList.remove('hidden');
             setTimeout(() => { modal.classList.remove('opacity-0'); box.classList.remove('scale-95'); }, 10);
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
+
+        function confirmModalAction() {
+            if (pendingConfirmAction) pendingConfirmAction();
+        }
+
+        function showResetModal() {
+            showConfirmModal(
+                'Logs wirklich löschen?',
+                'Bist du sicher? Alle historischen Aufzeichnungen und Statistiken (log.bin, totals.bin, ring.bin) werden unwiderruflich vom ESP32 gelöscht!',
+                resetLogs, 'Ja, löschen', 'trash-2'
+            );
         }
 
         function hideResetModal() {
@@ -834,6 +1395,8 @@
 
         // --- Live Daten ---
         function updateDashboard(data) {
+            if (data.full) renderInverterLive(data.full);
+
             const solarPower = data.sol_v * data.sol_a;
             const batteryPower = data.bat_v * data.bat_a;
 
@@ -1073,6 +1636,50 @@
 
             // 3. Lade Langzeitaufzeichnung (log.bin)
             await loadLogData();
+
+            // 4. Lade Speicherplatz-Info
+            await loadFsInfo();
+        }
+
+        async function loadFsInfo() {
+            document.getElementById('hist-loading-fs').classList.remove('hidden');
+            try {
+                const res = await fetch('/fs_info');
+                if (!res.ok) throw new Error('fs_info fetch failed');
+                const data = await res.json();
+
+                const total = data.total, used = data.used;
+                const free = total - used;
+                const percent = total > 0 ? (used / total * 100) : 0;
+
+                const fmtKB = (bytes) => (bytes / 1024).toFixed(1) + ' KB';
+                document.getElementById('fs-used').innerText = fmtKB(used);
+                document.getElementById('fs-total').innerText = fmtKB(total);
+                document.getElementById('fs-free').innerText = (free / 1024).toFixed(1);
+                document.getElementById('fs-percent').innerText = percent.toFixed(1) + '%';
+
+                const bar = document.getElementById('fs-bar');
+                bar.style.width = Math.min(100, percent) + '%';
+                bar.className = 'h-full transition-all duration-500 ' +
+                    (percent >= 90 ? 'bg-red-500' : percent >= 70 ? 'bg-orange-400' : 'bg-primary');
+
+                // Schätzung: log.bin wächst um 4 Byte pro 10-Minuten-Periode
+                // (Standard-Intervall - siehe EnergyLog auf dem Gerät).
+                const bytesPerDay = 4 * (24 * 60 / 10);
+                const remainingDays = free / bytesPerDay;
+                const remainingEl = document.getElementById('fs-remaining');
+                if (!isFinite(remainingDays) || remainingDays < 0) {
+                    remainingEl.innerHTML = '-';
+                } else if (remainingDays > 365) {
+                    remainingEl.innerHTML = (remainingDays / 365).toFixed(1) + '<span class="text-sm text-slate-400 ml-1">Jahre</span>';
+                } else {
+                    remainingEl.innerHTML = Math.round(remainingDays) + '<span class="text-sm text-slate-400 ml-1">Tage</span>';
+                }
+            } catch (err) {
+                console.log("Fehler beim Laden von fs_info", err);
+            } finally {
+                document.getElementById('hist-loading-fs').classList.add('hidden');
+            }
         }
 
         function renderRingData(sol_wh, char_wh, dis_wh, sol_amp, bat_volt, sun_volt) {
@@ -1141,12 +1748,52 @@
                 return;
             }
 
+            // timestamps.bin verknüpft einzelne Sample-Indizes (SampleIndex,
+            // Unix-Timestamp) mit einer echten Uhrzeit - das Gerät selbst hat
+            // weder RTC noch Internet, daher gibt es nur gelegentliche Anker
+            // statt einer Uhrzeit pro Eintrag (siehe EnergyLog::noteClientTime
+            // auf dem Gerät). Fehlt die Datei oder ist sie leer, wird wie schon
+            // vorher einfach rückwärts von "jetzt" gezählt.
+            const checkpoints = []; // { sampleIndex, epochSeconds }
+            try {
+                const tsResponse = await fetch('/timestamps.bin');
+                if (tsResponse.ok) {
+                    const tsBuffer = await tsResponse.arrayBuffer();
+                    const tsView = new DataView(tsBuffer);
+                    for (let off = 0; off + 8 <= tsBuffer.byteLength; off += 8) {
+                        checkpoints.push({
+                            sampleIndex: tsView.getUint32(off, true),
+                            epochSeconds: tsView.getUint32(off + 4, true)
+                        });
+                    }
+                }
+            } catch (err) {
+                console.log("Fehler beim Laden von timestamps.bin", err);
+            }
+
+            const sampleIntervalMs = 10 * 60 * 1000; // entspricht dem Standard-savingCycleMs des Geräts
+            const nowTime = new Date().getTime();
+
+            // Datiert einen Messwert über den nächstgelegenen Checkpoint, indem in
+            // ganzen Sample-Intervallen von ihm weggezählt wird. Gibt es (noch)
+            // keinen Checkpoint, wird rückwärts von "jetzt" gezählt.
+            function dateForSample(index) {
+                if (checkpoints.length === 0) {
+                    return new Date(nowTime - (numSamples - 1 - index) * sampleIntervalMs);
+                }
+                let nearest = checkpoints[0];
+                for (const cp of checkpoints) {
+                    if (Math.abs(cp.sampleIndex - index) < Math.abs(nearest.sampleIndex - index)) nearest = cp;
+                }
+                const deltaSamples = index - nearest.sampleIndex;
+                return new Date(nearest.epochSeconds * 1000 + deltaSamples * sampleIntervalMs);
+            }
+
             const labels = [];
             const dataSolV = [], dataBatV = [], dataInvStatus = [];
             const dataSolA = [], dataBatA = [];
-            
+
             globalLogData = [];
-            const nowTime = new Date().getTime();
 
             // Downsampling für Chart (max ~500 Punkte, schützt vor Browser-Freeze)
             const maxChartPoints = 500;
@@ -1162,12 +1809,11 @@
                 const bat_amp = (b0 * (170.0 / 255.0)) - 130.0;
                 const sol_volt = b1 * (40.0 / 255.0);
                 const sol_amp = b2 * (25.0 / 255.0);
-                const inverter_on = (b3 & 0x80) !== 0; 
-                const bat_volt = ((b3 & 0x7F) * (11.0 / 127.0)) + 19.0; 
+                const inverter_on = (b3 & 0x80) !== 0;
+                const bat_volt = ((b3 & 0x7F) * (11.0 / 127.0)) + 19.0;
 
-                const timeOffset = (numSamples - 1 - i) * 10 * 60 * 1000;
-                const sampleDate = new Date(nowTime - timeOffset);
-                
+                const sampleDate = dateForSample(i);
+
                 // CSV speichert ALLE Daten
                 globalLogData.push({
                     date: sampleDate.toLocaleString('de-DE'),
@@ -1256,8 +1902,291 @@
             }
         }
 
+        // ================= Inverter-Tab =================
+
+        // Deckt sich mit AxpertTypes.h - Zahl links ist der Wert, der an die
+        // /inverter/p...-Endpunkte geschickt wird; der String rechts ist der
+        // Name, den die /inverter/q...-Endpunkte zurückgeben.
+        const ENUM_OUTPUT_SOURCE_PRIORITY = { UtilityFirst: 0, SolarFirst: 1, SbuFirst: 2 };
+        const ENUM_CHARGER_SOURCE_PRIORITY = { UtilityFirst: 0, SolarFirst: 1, SolarAndUtility: 2, SolarOnly: 3 };
+        const ENUM_BATTERY_TYPE = { Agm: 0, Flooded: 1, User: 2, Pylontech: 3, Shinheung: 4, Weco: 5, Soltaro: 6 };
+        const ENUM_INPUT_VOLTAGE_RANGE = { Appliance: 0, Ups: 1 };
+
+        async function invQuery(path) {
+            try {
+                const res = await fetch(path);
+                return await res.json();
+            } catch (err) {
+                return { ok: false, error: 'Network error (ESP offline?)' };
+            }
+        }
+
+        function showInvError(elementId, message) {
+            const el = document.getElementById(elementId);
+            if (!el) return;
+            el.textContent = message;
+            el.classList.remove('hidden');
+        }
+
+        function hideInvError(elementId) {
+            document.getElementById(elementId)?.classList.add('hidden');
+        }
+
+        // Only for short-lived success messages (e.g. after "Apply") - hides
+        // itself again after a few seconds.
+        function showInvSuccess(elementId, message) {
+            const el = document.getElementById(elementId);
+            if (!el) return;
+            el.textContent = message;
+            el.classList.remove('hidden');
+            setTimeout(() => el.classList.add('hidden'), 4000);
+        }
+
+        async function withButtonSpinner(button, fn) {
+            const originalHtml = button.innerHTML;
+            button.disabled = true;
+            button.innerHTML = '<i data-lucide="loader" class="w-3.5 h-3.5 animate-spin"></i>';
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+            try {
+                return await fn();
+            } finally {
+                button.innerHTML = originalHtml;
+                button.disabled = false;
+                if (typeof lucide !== 'undefined') lucide.createIcons();
+            }
+        }
+
+        // Renders a flat {key: value} object (as returned by the
+        // /inverter/q... endpoints) as a simple key/value list.
+        function renderKeyValueTable(elementId, data) {
+            const el = document.getElementById(elementId);
+            if (!el) return;
+            if (!data || typeof data !== 'object') { el.innerHTML = '<span class="text-slate-500">No data</span>'; return; }
+
+            const entries = Object.entries(data);
+            if (entries.length === 0) { el.innerHTML = '<span class="text-slate-500">No data</span>'; return; }
+
+            el.innerHTML = entries.map(([key, val]) => {
+                let display;
+                if (Array.isArray(val)) display = val.length ? val.join(', ') : '-';
+                else if (typeof val === 'boolean') display = val ? 'Yes' : 'No';
+                else display = String(val);
+                return `<div class="flex justify-between gap-3 py-1 border-b border-slate-700/50 last:border-0">
+                    <span class="text-slate-400">${key}</span>
+                    <span class="text-white font-mono text-xs text-right">${display}</span>
+                </div>`;
+            }).join('');
+        }
+
+        // Generic "Reload" button for a pure display card: queries `path`
+        // and renders the result as a key/value list in `resultElId`, or
+        // shows the error in `errorElId`.
+        async function reloadInverterCard(button, path, resultElId, errorElId) {
+            hideInvError(errorElId);
+            const result = await withButtonSpinner(button, () => invQuery(path));
+            if (result.ok) {
+                renderKeyValueTable(resultElId, result.data);
+            } else {
+                showInvError(errorElId, 'Error: ' + (result.error || 'unknown'));
+            }
+        }
+
+        // Generic "Apply" button for a setting: calls `path` (the query
+        // string already contains the value to set) and shows success/error
+        // right next to the field.
+        async function applyInverterSetting(button, path, errorElId) {
+            hideInvError(errorElId);
+            const result = await withButtonSpinner(button, () => invQuery(path));
+            if (result.ok) {
+                showInvSuccess(errorElId, 'Applied.');
+                document.getElementById(errorElId)?.classList.remove('text-red-400');
+                document.getElementById(errorElId)?.classList.add('text-emerald-400');
+                setTimeout(() => {
+                    document.getElementById(errorElId)?.classList.remove('text-emerald-400');
+                    document.getElementById(errorElId)?.classList.add('text-red-400');
+                }, 4000);
+            } else {
+                showInvError(errorElId, 'Failed: ' + (result.error || 'unknown'));
+            }
+        }
+
+        // --- Live feed - fed by updateDashboard() from the /live cycle
+        // that's already running, no extra query ---
+        function renderInverterLive(full) {
+            const grid = document.getElementById('inv-live-grid');
+            if (!grid) return;
+
+            const items = [
+                ['Grid Voltage', full.gridVoltage.toFixed(1) + ' V'],
+                ['Grid Frequency', full.gridFrequency.toFixed(2) + ' Hz'],
+                ['AC Output Voltage', full.acOutputVoltage.toFixed(1) + ' V'],
+                ['AC Output Frequency', full.acOutputFrequency.toFixed(2) + ' Hz'],
+                ['Apparent Power', full.acOutputApparentPower + ' VA'],
+                ['Active Power', full.acOutputActivePower + ' W'],
+                ['Load Percent', full.outputLoadPercent + ' %'],
+                ['Bus Voltage', full.busVoltage + ' V'],
+                ['Battery Voltage', full.batteryVoltage.toFixed(2) + ' V'],
+                ['Battery Charging Current', full.batteryChargingCurrent + ' A'],
+                ['Battery Capacity', full.batteryCapacityPercent + ' %'],
+                ['Heat Sink Temperature', full.inverterHeatSinkTemperature + ' °C'],
+                ['PV Input Current', full.pvInputCurrent.toFixed(1) + ' A'],
+                ['PV Input Voltage', full.pvInputVoltage.toFixed(1) + ' V'],
+                ['SCC Battery Voltage', full.batteryVoltageFromScc.toFixed(2) + ' V'],
+                ['Battery Discharge Current', full.batteryDischargeCurrent + ' A'],
+                ['PV Charging Power', full.pvChargingPower + ' W'],
+                ['Configuration Changed', full.isConfigurationChanged ? 'Yes' : 'No'],
+                ['Load On', full.isLoadOn ? 'Yes' : 'No'],
+                ['Charging', full.isCharging ? 'Yes' : 'No'],
+                ['SCC Charging', full.isSCCCharging ? 'Yes' : 'No'],
+                ['AC Charging', full.isACCharging ? 'Yes' : 'No'],
+            ];
+
+            grid.innerHTML = items.map(([label, val]) => `
+                <div class="bg-slate-800/50 p-3 rounded-lg border border-slate-700/50">
+                    <span class="text-slate-500 text-[10px] uppercase tracking-wider block mb-0.5">${label}</span>
+                    <span class="text-white font-mono text-sm">${val}</span>
+                </div>
+            `).join('');
+        }
+
+        // --- Device flags ---
+        const FLAG_FIELDS = ['silenceBuzzer', 'overloadBypass', 'lcdEscapeToDefault', 'overloadRestart',
+                              'overTemperatureRestart', 'backlightOn', 'alarmOnPrimarySourceInterrupt', 'faultCodeRecord'];
+
+        async function reloadFlags(button) {
+            hideInvError('err-flags');
+            const result = await withButtonSpinner(button, () => invQuery('/inverter/qflag'));
+            if (!result.ok) { showInvError('err-flags', 'Load failed: ' + (result.error || 'unknown')); return; }
+            FLAG_FIELDS.forEach(f => {
+                const cb = document.getElementById('inv-flag-' + f);
+                if (cb) cb.checked = !!result.data[f + 'Enabled'];
+            });
+        }
+
+        async function applyFlags(button) {
+            hideInvError('err-flags');
+            const params = FLAG_FIELDS.map(f => {
+                const cb = document.getElementById('inv-flag-' + f);
+                return f + '=' + (cb.checked ? 1 : 0);
+            }).join('&');
+
+            const result = await withButtonSpinner(button, () => invQuery('/inverter/pe_pd?' + params));
+            if (result.ok) {
+                showInvSuccess('msg-flags', 'Flags applied.');
+            } else {
+                showInvError('err-flags', 'Failed: ' + (result.error || 'unknown'));
+            }
+        }
+
+        // --- Battery equalization ---
+        async function reloadEqualization(button) {
+            hideInvError('err-qbeqi');
+            const result = await withButtonSpinner(button, () => invQuery('/inverter/qbeqi'));
+            if (!result.ok) { showInvError('err-qbeqi', 'Load failed: ' + (result.error || 'unknown')); return; }
+
+            const d = result.data;
+            document.getElementById('inv-pbeqe').checked = !!d.enabled;
+            document.getElementById('inv-pbeqt').value = d.equalizationTimeMinutes;
+            document.getElementById('inv-pbeqp').value = d.equalizationPeriodDays;
+            document.getElementById('inv-pbeqv').value = d.equalizationVoltage;
+            document.getElementById('inv-pbeqot').value = d.equalizationOverTimeMinutes;
+
+            renderKeyValueTable('inv-qbeqi-readonly', {
+                maxCurrent_A: d.equalizationMaxCurrent,
+                activeNow: d.active ? 'Yes' : 'No',
+                elapsedTime_h: d.equalizationElapseTimeHours
+            });
+        }
+
+        // --- Inverter rating & derived settings ---
+        async function reloadRatingInfo(button) {
+            hideInvError('err-qpiri');
+            const result = await withButtonSpinner(button, () => invQuery('/inverter/qpiri'));
+            if (!result.ok) { showInvError('err-qpiri', 'Load failed: ' + (result.error || 'unknown')); return; }
+
+            const d = result.data;
+            document.getElementById('inv-pop').value = ENUM_OUTPUT_SOURCE_PRIORITY[d.outputSourcePriority] ?? 0;
+            document.getElementById('inv-pcp').value = ENUM_CHARGER_SOURCE_PRIORITY[d.chargerSourcePriority] ?? 0;
+            document.getElementById('inv-pgr').value = ENUM_INPUT_VOLTAGE_RANGE[d.inputVoltageRange] ?? 0;
+            document.getElementById('inv-pbt').value = ENUM_BATTERY_TYPE[d.batteryType] ?? 0;
+            document.getElementById('inv-pbcv').value = d.batteryRechargeVoltage;
+            document.getElementById('inv-psdv').value = d.batteryUnderVoltage;
+            document.getElementById('inv-pcvv').value = d.batteryBulkVoltage;
+            document.getElementById('inv-pbft').value = d.batteryFloatVoltage;
+            document.getElementById('inv-pcvt').value = d.maxChargingTimeAtCvMinutes;
+
+            renderKeyValueTable('inv-qpiri-readonly', {
+                acOutputRatingVoltage_V: d.acOutputRatingVoltage,
+                acOutputRatingCurrent_A: d.acOutputRatingCurrent,
+                acOutputRatingFrequency_Hz: d.acOutputRatingFrequency,
+                acOutputRatingApparentPower_VA: d.acOutputRatingApparentPower,
+                acOutputRatingActivePower_W: d.acOutputRatingActivePower,
+                batteryRatingVoltage_V: d.batteryRatingVoltage,
+                batteryRedischargeVoltage_V: d.batteryRedischargeVoltage,
+                maxAcChargingCurrent_A: d.maxAcChargingCurrent,
+                maxChargingCurrent_A: d.maxChargingCurrent,
+                parallelMaxNumber: d.parallelMaxNumber,
+                machineType: d.machineType,
+                topology: d.topology,
+                outputMode: d.outputMode,
+                pvOkConditionForParallel: d.pvOkConditionForParallel,
+                pvPowerBalance: d.pvPowerBalance
+            });
+        }
+
+        // --- Max charging current options - fills a <select> with the allowed values ---
+        async function reloadChargingOptions(button, queryPath, selectId, errorElId) {
+            hideInvError(errorElId);
+            const result = await withButtonSpinner(button, () => invQuery(queryPath));
+            if (!result.ok) { showInvError(errorElId, 'Load failed: ' + (result.error || 'unknown')); return; }
+
+            const select = document.getElementById(selectId);
+            const values = result.data.values || [];
+            select.innerHTML = values.length
+                ? values.map(v => `<option value="${v}">${v} A</option>`).join('')
+                : '<option value="">No options reported</option>';
+        }
+
+        // --- Factory reset, with extra confirmation via the shared modal ---
+        function confirmFactoryReset() {
+            showConfirmModal(
+                'Really perform a factory reset?',
+                'All inverter settings (charging parameters, priorities, voltages, ...) will be reset to factory defaults. This action cannot be undone!',
+                factoryResetInverter, 'Yes, reset', 'alert-triangle'
+            );
+        }
+
+        async function factoryResetInverter() {
+            const btn = document.getElementById('btn-confirm-reset');
+            const originalHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> Resetting...';
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+
+            hideInvError('err-pf');
+            const result = await invQuery('/inverter/pf?confirm=yes');
+            hideResetModal();
+
+            if (result.ok) {
+                showSystemMsg('Factory reset completed.', 'success');
+            } else {
+                showInvError('err-pf', 'Factory reset failed: ' + (result.error || 'unknown'));
+            }
+
+            btn.innerHTML = originalHtml;
+            btn.disabled = false;
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
+
         fetchLiveData();
         setInterval(fetchLiveData, 2000);
+
+        // Das Gerät hat weder eine RTC noch Internet - die einzige Quelle für
+        // eine echte Uhrzeit ist die Systemuhr des gerade verbundenen Geräts
+        // (die braucht kein Internet, sie liest nur die lokale Uhrzeit aus).
+        // Einmal pro Seitenaufruf reicht: das ESP32 schreibt daraus höchstens
+        // alle 24h einen Zeitstempel-Checkpoint in log.bin.
+        fetch('/time?epoch=' + Math.floor(Date.now() / 1000)).catch(() => {});
 
     </script>
 </body>
