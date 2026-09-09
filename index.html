@@ -412,9 +412,9 @@
                             </div>
                         </div>
                         <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
-                            <span class="text-slate-500 text-xs uppercase tracking-wider block mb-1">Reicht noch für</span>
-                            <div class="flex items-baseline gap-1">
-                                <span id="fs-remaining" class="text-2xl font-bold text-blue-400">-</span>
+                            <span class="text-slate-500 text-xs uppercase tracking-wider block mb-1">Reicht noch bis</span>
+                            <div>
+                                <span id="fs-remaining" class="text-lg font-bold text-blue-400 leading-snug whitespace-nowrap">-</span>
                             </div>
                             <span class="text-slate-500 text-[10px]">Schätzung: log.bin wächst um 4 Byte / 10 Min</span>
                         </div>
@@ -1641,6 +1641,18 @@
             await loadFsInfo();
         }
 
+        // Formatiert einen Zeitpunkt als "04. Mai 2027 21:03:53 Uhr" - immer
+        // anhand der lokalen Uhrzeit des Endgeräts (new Date()/Date.now()
+        // laufen im Browser, nicht auf dem ESP, der ja keine RTC hat).
+        const GERMAN_MONTHS = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
+            'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
+
+        function formatDateTime(date) {
+            const pad = (n) => String(n).padStart(2, '0');
+            return pad(date.getDate()) + '. ' + GERMAN_MONTHS[date.getMonth()] + ' ' + date.getFullYear() +
+                ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes()) + ':' + pad(date.getSeconds()) + ' Uhr';
+        }
+
         async function loadFsInfo() {
             document.getElementById('hist-loading-fs').classList.remove('hidden');
             try {
@@ -1665,16 +1677,12 @@
 
                 // Schätzung: log.bin wächst um 4 Byte pro 10-Minuten-Periode
                 // (Standard-Intervall - siehe EnergyLog auf dem Gerät).
-                const bytesPerDay = 4 * (24 * 60 / 10);
-                const remainingDays = free / bytesPerDay;
+                const secondsPerByte = (10 * 60) / 4;
+                const remainingSeconds = free * secondsPerByte;
                 const remainingEl = document.getElementById('fs-remaining');
-                if (!isFinite(remainingDays) || remainingDays < 0) {
-                    remainingEl.innerHTML = '-';
-                } else if (remainingDays > 365) {
-                    remainingEl.innerHTML = (remainingDays / 365).toFixed(1) + '<span class="text-sm text-slate-400 ml-1">Jahre</span>';
-                } else {
-                    remainingEl.innerHTML = Math.round(remainingDays) + '<span class="text-sm text-slate-400 ml-1">Tage</span>';
-                }
+                remainingEl.textContent = (!isFinite(remainingSeconds) || remainingSeconds < 0)
+                    ? '-'
+                    : formatDateTime(new Date(Date.now() + remainingSeconds * 1000));
             } catch (err) {
                 console.log("Fehler beim Laden von fs_info", err);
             } finally {

@@ -33,6 +33,8 @@ WebPortal::WebPortal(TrackerConfig& config, InverterLink& inverter, EnergyLog& e
     : _config(config), _inverter(inverter), _energyLog(energyLog), _relay(relay), _server(80) {}
 
 void WebPortal::begin() {
+    WiFi.setTxPower(WIFI_POWER_19_5dBm);
+    WiFi.setSleep(false);
     WiFi.mode(WIFI_AP);
     WiFi.softAP("Solar Tracker");
     IPAddress apIP = WiFi.softAPIP();
@@ -57,6 +59,7 @@ void WebPortal::update() {
 void WebPortal::setupRoutes() {
     _server.on("/update", HTTP_GET, [this]() { handleUpdatePageGet(); });
     _server.on("/update", HTTP_POST, [this]() { handleUpdatePost(); }, [this]() { handleUpdateUpload(); });
+    _server.on("/files", HTTP_GET, [this]() { handleFilesListGet(); });
     _server.on("/delete", HTTP_GET, [this]() { handleDeleteFileGet(); });
 
     _server.on("/", HTTP_GET, [this]() { handleRoot(); });
@@ -135,7 +138,11 @@ void WebPortal::handleUpdatePageGet() {
     // before uploading; the plain one uploads whatever was selected
     // unmodified - for files you already compressed yourself, or that
     // shouldn't be compressed at all, or if the browser doesn't support
-    // CompressionStream (Safari <16.4, older browsers).
+    // CompressionStream (Safari <16.4, older browsers). Uploading a name
+    // that already exists on LittleFS just replaces it (handleUpdateUpload()
+    // opens the file with "w", which truncates). Both uploads go through
+    // fetch() rather than a real form submit so the page (and its file list
+    // below) stays put instead of navigating to the plain-text response.
     _server.send(200, "text/html", R"HTML(<!DOCTYPE html>
 <html>
 <head>
@@ -145,8 +152,15 @@ void WebPortal::handleUpdatePageGet() {
 body{font-family:sans-serif;padding:20px;max-width:480px;margin:0 auto;}
 .box{border:1px solid #ccc;border-radius:8px;padding:16px;margin-bottom:20px;}
 button,input[type=submit]{padding:8px 16px;margin-top:8px;}
-#gzip-status{margin-top:10px;font-size:14px;}
+#gzip-status,#plain-status{margin-top:10px;font-size:14px;}
 #gzip-unsupported{color:#b00;display:none;}
+#file-list{list-style:none;padding:0;margin:0;}
+#file-list li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #eee;}
+#file-list li:last-child{border-bottom:none;}
+#file-list .fname{word-break:break-all;}
+#file-list .fsize{color:#666;font-size:12px;white-space:nowrap;}
+#file-list button.del{background:#c00;color:#fff;border:none;border-radius:4px;padding:4px 10px;cursor:pointer;flex-shrink:0;}
+#file-list-status{font-size:14px;color:#666;}
 </style>
 </head>
 <body>
@@ -165,10 +179,16 @@ button,input[type=submit]{padding:8px 16px;margin-top:8px;}
 <div class="box">
 <h3>Unkomprimiert hochladen</h3>
 <p>L&auml;dt die Datei 1:1 hoch, ohne &Auml;nderung - f&uuml;r bereits komprimierte Dateien oder Dateien, die nicht komprimiert werden sollen.</p>
-<form method="POST" action="/update" enctype="multipart/form-data">
-<input type="file" name="update"><br><br>
-<input type="submit" value="Hochladen">
-</form>
+<input type="file" id="plain-file">
+<br><br>
+<button onclick="uploadPlain()">Hochladen</button>
+<p id="plain-status"></p>
+</div>
+
+<div class="box">
+<h3>Dateien auf dem ESP</h3>
+<p id="file-list-status">Lade...</p>
+<ul id="file-list"></ul>
 </div>
 
 <script>
@@ -198,9 +218,92 @@ async function uploadCompressed() {
             ? ("Erfolg: " + file.name + ".gz (" + compressedBlob.size + " von " + file.size + " Bytes)")
             : ("Fehler: " + text);
     } catch (err) {
+        // Die Verbindung kann abreissen, obwohl der Upload auf dem ESP schon
+        // durchgelaufen ist (z.B. wenn das Handy/der Tab waehrend des
+        // Uploads in den Hintergrund/Sperrbildschirm geht) - die Dateiliste
+        // unten zeigt den tatsaechlichen Stand, unabhaengig von dieser
+        // Statusmeldung.
+        status.textContent = "Verbindung unterbrochen (" + err + "). Bitte in der Liste unten pruefen, ob die Datei trotzdem angekommen ist.";
+    } finally {
+        loadFileList();
+    }
+}
+
+async function uploadPlain() {
+    const input = document.getElementById("plain-file");
+    const status = document.getElementById("plain-status");
+    if (!input.files.length) { status.textContent = "Bitte zuerst eine Datei auswaehlen."; return; }
+
+    const file = input.files[0];
+    const formData = new FormData();
+    formData.append("update", file, file.name);
+
+    status.textContent = "Lade hoch...";
+    try {
+        const res = await fetch("/update", { method: "POST", body: formData });
+        const text = await res.text();
+        status.textContent = res.ok ? ("Erfolg: " + file.name) : ("Fehler: " + text);
+    } catch (err) {
+        status.textContent = "Verbindung unterbrochen (" + err + "). Bitte in der Liste unten pruefen, ob die Datei trotzdem angekommen ist.";
+    } finally {
+        loadFileList();
+    }
+}
+
+async function loadFileList() {
+    const status = document.getElementById("file-list-status");
+    const list = document.getElementById("file-list");
+    status.textContent = "Lade...";
+    list.innerHTML = "";
+    try {
+        const res = await fetch("/files");
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const files = await res.json();
+        if (!files.length) {
+            status.textContent = "Keine Dateien vorhanden.";
+            return;
+        }
+        status.textContent = "";
+        files.sort((a, b) => a.name.localeCompare(b.name));
+        for (const f of files) {
+            const li = document.createElement("li");
+
+            const nameSpan = document.createElement("span");
+            nameSpan.className = "fname";
+            nameSpan.textContent = f.name;
+
+            const sizeSpan = document.createElement("span");
+            sizeSpan.className = "fsize";
+            sizeSpan.textContent = (f.size / 1024).toFixed(1) + " KB";
+
+            const delBtn = document.createElement("button");
+            delBtn.className = "del";
+            delBtn.textContent = "Loeschen";
+            delBtn.onclick = () => deleteFile(f.name);
+
+            li.appendChild(nameSpan);
+            li.appendChild(sizeSpan);
+            li.appendChild(delBtn);
+            list.appendChild(li);
+        }
+    } catch (err) {
         status.textContent = "Fehler: " + err;
     }
 }
+
+async function deleteFile(name) {
+    if (!confirm(name + " wirklich loeschen?")) return;
+    try {
+        const res = await fetch("/delete?path=" + encodeURIComponent(name));
+        const text = await res.text();
+        if (!res.ok) { alert("Fehler: " + text); return; }
+        loadFileList();
+    } catch (err) {
+        alert("Fehler: " + err);
+    }
+}
+
+loadFileList();
 </script>
 </body>
 </html>
@@ -209,6 +312,26 @@ async function uploadCompressed() {
 
 void WebPortal::handleUpdatePost() {
     _server.send(200, "text/plain", "Upload erfolgreich!");
+}
+
+void WebPortal::handleFilesListGet() {
+    String json = "[";
+    File root = LittleFS.open("/");
+    bool first = true;
+    for (File entry = root.openNextFile(); entry; entry = root.openNextFile()) {
+        if (entry.isDirectory()) continue;
+
+        String name = entry.name();
+        if (!name.startsWith("/")) name = "/" + name;
+        name.replace("\\", "\\\\");
+        name.replace("\"", "\\\"");
+
+        if (!first) json += ",";
+        first = false;
+        json += "{\"name\":\"" + name + "\",\"size\":" + String((unsigned long)entry.size()) + "}";
+    }
+    json += "]";
+    _server.send(200, "application/json", json);
 }
 
 void WebPortal::handleDeleteFileGet() {

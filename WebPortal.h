@@ -34,7 +34,8 @@ private:
     void handleUpdatePageGet();
     void handleUpdatePost();
     void handleUpdateUpload();
-    void handleDeleteFileGet(); // ?path=/foo - removes a stray/superseded LittleFS file
+    void handleFilesListGet(); // [{"name":"/foo","size":123},...] - backs the file list on /update
+    void handleDeleteFileGet(); // ?path=/foo - called via fetch() from the /update file list, not visited directly
 
     void handleRoot();
     void handleLive();
