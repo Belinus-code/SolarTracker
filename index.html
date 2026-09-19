@@ -1378,12 +1378,7 @@
                 // Antwort vom Inverter in Standard-Grün
                 outputEl.innerHTML += `\n<span class="text-emerald-400">${responseText}</span>`;
             } catch (error) {
-                if (error.message.includes('Failed to fetch') || window.location.hostname === '') {
-                     outputEl.innerHTML += `\n<span class="text-slate-500">(Demo) Inverter ACK: Befehl '${cmd}' ausgeführt.</span>`;
-                } else {
-                     // Rote Fehlermeldung ausgeben
-                     outputEl.innerHTML += `\n<span class="text-red-400">${error.message}</span>`;
-                }
+                outputEl.innerHTML += `\n<span class="text-red-400">${error.message}</span>`;
             } finally {
                 outputEl.scrollTop = outputEl.scrollHeight;
                 btn.disabled = false;
