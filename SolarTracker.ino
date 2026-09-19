@@ -50,6 +50,10 @@ void setup() {
 }
 
 void loop() {
+    // Every loop() pass (much denser than sampleCycleMs) so a brief mains
+    // dropout within a period isn't missed - see EnergyLog::noteMainsOnline().
+    energyLog.noteMainsOnline(mainsSensor.isOnline());
+
     if (millis() - lastSampleMs >= config.sampleCycleMs) {
         lastSampleMs += config.sampleCycleMs;
         if (config.samplingEnabled) {
@@ -65,7 +69,7 @@ void loop() {
         }
     }
 
-    energyLog.update(mainsSensor.isOnline(), config.savingCycleMs, config.loggingEnabled);
+    energyLog.update(config.savingCycleMs, config.loggingEnabled);
     relay.update();
     webPortal.update();
 }

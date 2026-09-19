@@ -25,11 +25,18 @@ public:
     // accumulators. Call this every sampleCycleMs while sampling is enabled.
     void addSample(const InverterReading& reading, uint32_t sampleCycleMs);
 
+    // Feeds the current mains/220V-output status into the period's
+    // accumulator. Call this every loop() (unconditionally, not gated by
+    // samplingEnabled/loggingEnabled) so a brief dropout isn't missed - if
+    // this is ever false during a period, the whole period gets stamped
+    // "offline" in the raw log's status bit (see update()), even if mains
+    // was back by the time the period is flushed.
+    void noteMainsOnline(bool mainsOnline);
+
     // Call every loop(); once savingCycleMs has elapsed since the last
     // flush, averages/compresses the accumulated period into the raw log,
     // rolls the ring buffer forward by one slot and updates totals.
-    // `mainsOnline` is stamped into the raw log's status bit for this period.
-    void update(bool mainsOnline, uint32_t savingCycleMs, bool loggingEnabled);
+    void update(uint32_t savingCycleMs, bool loggingEnabled);
 
     // Wipes log.bin/totals.bin/ring.bin and all in-memory state. Used by the
     // web UI's "reset logs" action.
@@ -100,6 +107,11 @@ private:
     float _periodMaxSolarAmp = 0;
     float _periodMaxBatteryVolt = 0;
     float _periodBatteryVoltAtSunrise = 35.0f;
+
+    // True if any noteMainsOnline() this period was called with
+    // mainsOnline == false - i.e. the 220V output wasn't on for the whole
+    // period.
+    bool _periodMainsOffline = false;
 
     RingSlot _ring[kSlotsPerDay];
     uint8_t _ringIndex = 0;

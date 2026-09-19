@@ -1812,6 +1812,9 @@
                 const bat_amp = (b0 * (170.0 / 255.0)) - 130.0;
                 const sol_volt = b1 * (40.0 / 255.0);
                 const sol_amp = b2 * (25.0 / 255.0);
+                // "Inverter Status": war die 220V-Ausgangsspannung
+                // *durchgehend* im ganzen Intervall an - nicht nur ein
+                // Momentanwert beim Speichern (siehe EnergyLog::noteMainsOnline()).
                 const inverter_on = (b3 & 0x80) !== 0;
                 const bat_volt = ((b3 & 0x7F) * (11.0 / 127.0)) + 19.0;
 
@@ -1874,7 +1877,7 @@
             if (!globalLogData || globalLogData.length === 0) return;
             
             let csvContent = "Datum / Uhrzeit;Solar Spannung (V);Solar Strom (A);Batterie Spannung (V);Batterie Strom (A);Inverter Last Aktiv\n";
-            
+
             globalLogData.forEach(row => {
                 const formatNum = (num) => (typeof num === 'number' && !isNaN(num)) ? num.toFixed(2).replace('.', ',') : '0,00';
                 csvContent += `${row.date};${formatNum(row.sol_v)};${formatNum(row.sol_a)};${formatNum(row.bat_v)};${formatNum(row.bat_a)};${row.inv ? 'Ja' : 'Nein'}\n`;

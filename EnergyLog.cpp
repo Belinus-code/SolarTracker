@@ -32,6 +32,7 @@ void EnergyLog::resetPeriodAccumulators() {
     _periodMaxSolarAmp = 0;
     _periodMaxBatteryVolt = 0;
     _periodBatteryVoltAtSunrise = 35.0f;
+    _periodMainsOffline = false;
 }
 
 void EnergyLog::ensureFilesExist() {
@@ -134,9 +135,17 @@ void EnergyLog::addSample(const InverterReading& reading, uint32_t sampleCycleMs
     _totalUptimeMs += sampleCycleMs;
 }
 
-void EnergyLog::update(bool mainsOnline, uint32_t savingCycleMs, bool loggingEnabled) {
+void EnergyLog::noteMainsOnline(bool mainsOnline) {
+    if (!mainsOnline) _periodMainsOffline = true;
+}
+
+void EnergyLog::update(uint32_t savingCycleMs, bool loggingEnabled) {
     if (millis() - _lastSaveMs < savingCycleMs) return;
     _lastSaveMs += savingCycleMs;
+
+    // At least one noteMainsOnline(false) this period means the whole
+    // period is stamped "offline" below, even if mains was back on by now.
+    bool mainsOnlineWholePeriod = !_periodMainsOffline;
 
     if (_sampleCount == 0) {
         // No samples came in this period (sampling was disabled the whole
@@ -161,7 +170,7 @@ void EnergyLog::update(bool mainsOnline, uint32_t savingCycleMs, bool loggingEna
     buffer[1] = (uint8_t)(solarVoltAvg * (255.0f / 40.0f));
     buffer[2] = (uint8_t)(solarAmpAvg * (255.0f / 25.0f));
     buffer[3] = (uint8_t)((batteryVoltAvg - 19.0f) * (127.0f / 11.0f)) & 0x7F;
-    if (mainsOnline) buffer[3] |= 0x80;
+    if (mainsOnlineWholePeriod) buffer[3] |= 0x80;
 
     if (loggingEnabled) {
         File file = LittleFS.open(kLogPath, FILE_APPEND);
