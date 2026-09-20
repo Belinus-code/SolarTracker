@@ -4,6 +4,7 @@
 #include <LittleFS.h>
 #include <WebServer.h>
 
+#include "BuzzerIgnoreControl.h"
 #include "EnergyLog.h"
 #include "InverterLink.h"
 #include "InverterRelay.h"
@@ -14,7 +15,8 @@
 // keeps working unmodified.
 class WebPortal {
 public:
-    WebPortal(TrackerConfig& config, InverterLink& inverter, EnergyLog& energyLog, InverterRelay& relay);
+    WebPortal(TrackerConfig& config, InverterLink& inverter, EnergyLog& energyLog, InverterRelay& relay,
+              BuzzerIgnoreControl& buzzerIgnore);
 
     void begin(); // starts the AP, DNS, HTTP routes
     void update(); // call every loop()
@@ -24,6 +26,7 @@ private:
     InverterLink& _inverter;
     EnergyLog& _energyLog;
     InverterRelay& _relay;
+    BuzzerIgnoreControl& _buzzerIgnore;
 
     DNSServer _dnsServer;
     WebServer _server;
@@ -101,6 +104,10 @@ private:
     void handleInvSetBatteryEqualizationVoltageGet(); // PBEQV
     void handleInvSetBatteryEqualizationOverTimeGet();// PBEQOT
     void handleInvSetMaxChargingTimeAtCvGet();        // PCVT
+
+    // "Ignore Warning this time": silences the buzzer for the current
+    // battery-low episode - see BuzzerIgnoreControl.
+    void handleInvIgnoreBuzzerGet();
 
     // Sends a 400 {"ok":false,...} and returns false if `name` isn't present
     // in the current request's query args.

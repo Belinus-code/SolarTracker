@@ -566,6 +566,21 @@
                             </div>
                             <div id="res-qpiws" class="text-sm text-slate-500">Not loaded yet.</div>
                             <p id="err-qpiws" class="text-red-400 text-xs mt-1 hidden"></p>
+
+                            <!-- Shown/hidden live (fed by the /live cycle, see renderBuzzerIgnore()) -
+                                 appears only while the battery-low alarm is actually active. -->
+                            <div id="buzzer-ignore-box" class="mt-3 pt-3 border-t border-slate-700 hidden">
+                                <div class="flex items-center justify-between gap-3">
+                                    <p class="text-xs text-amber-400 flex items-center gap-1.5">
+                                        <i data-lucide="volume-2" class="w-3.5 h-3.5"></i>
+                                        <span id="buzzer-ignore-label">Battery low alarm active - buzzer beeping.</span>
+                                    </p>
+                                    <button id="buzzer-ignore-btn" onclick="ignoreBuzzer(this)" class="bg-amber-600 hover:bg-amber-500 text-white px-2.5 py-1 rounded-md text-xs flex items-center gap-1.5 transition-colors font-medium whitespace-nowrap">
+                                        Ignore Warning this time
+                                    </button>
+                                </div>
+                                <p id="buzzer-ignore-status" class="text-slate-500 text-[10px] mt-1"></p>
+                            </div>
                         </div>
                         <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700 lg:col-span-3">
                             <div class="flex justify-between items-center mb-2 gap-2">
@@ -1391,6 +1406,7 @@
         // --- Live Daten ---
         function updateDashboard(data) {
             if (data.full) renderInverterLive(data.full);
+            if (data.buzz) renderBuzzerIgnore(data.buzz);
 
             const solarPower = data.sol_v * data.sol_a;
             const batteryPower = data.bat_v * data.bat_a;
@@ -2053,6 +2069,46 @@
                     <span class="text-white font-mono text-sm">${val}</span>
                 </div>
             `).join('');
+        }
+
+        // --- Battery-low buzzer ("Ignore Warning this time") - fed by the
+        // same /live cycle as renderInverterLive(), no extra query. See
+        // BuzzerIgnoreControl on the device for the actual timing logic;
+        // this just shows/hides the button and a short status line. ---
+        function renderBuzzerIgnore(buzz) {
+            const box = document.getElementById('buzzer-ignore-box');
+            const label = document.getElementById('buzzer-ignore-label');
+            const btn = document.getElementById('buzzer-ignore-btn');
+            const status = document.getElementById('buzzer-ignore-status');
+            if (!box) return;
+
+            if (!buzz.lowAlarm) {
+                box.classList.add('hidden');
+                return;
+            }
+
+            box.classList.remove('hidden');
+            if (buzz.ignoreActive) {
+                label.textContent = 'Battery low alarm active - buzzer silenced for now.';
+                btn.classList.add('hidden');
+                status.textContent = 'Will start beeping again automatically once the alarm has been away for a full logging cycle.';
+            } else {
+                label.textContent = 'Battery low alarm active - buzzer beeping.';
+                btn.classList.remove('hidden');
+                status.textContent = '';
+            }
+        }
+
+        async function ignoreBuzzer(button) {
+            const status = document.getElementById('buzzer-ignore-status');
+            const result = await withButtonSpinner(button, () => invQuery('/inverter/ignore_buzzer'));
+            if (!result.ok) {
+                status.textContent = 'Failed: ' + (result.error || 'unknown');
+                status.classList.add('text-red-400');
+            } else {
+                status.classList.remove('text-red-400');
+                // renderBuzzerIgnore() picks up ignoreActive on the next /live tick (max 2s).
+            }
         }
 
         // --- Device flags ---

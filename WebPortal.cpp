@@ -29,8 +29,10 @@ void sendInverterSetResult(WebServer& server, bool ok) {
 
 } // namespace
 
-WebPortal::WebPortal(TrackerConfig& config, InverterLink& inverter, EnergyLog& energyLog, InverterRelay& relay)
-    : _config(config), _inverter(inverter), _energyLog(energyLog), _relay(relay), _server(80) {}
+WebPortal::WebPortal(TrackerConfig& config, InverterLink& inverter, EnergyLog& energyLog, InverterRelay& relay,
+                      BuzzerIgnoreControl& buzzerIgnore)
+    : _config(config), _inverter(inverter), _energyLog(energyLog), _relay(relay), _buzzerIgnore(buzzerIgnore),
+      _server(80) {}
 
 void WebPortal::begin() {
     WiFi.setTxPower(WIFI_POWER_19_5dBm);
@@ -126,6 +128,8 @@ void WebPortal::setupRoutes() {
     _server.on("/inverter/pbeqv", HTTP_GET, [this]() { handleInvSetBatteryEqualizationVoltageGet(); });
     _server.on("/inverter/pbeqot", HTTP_GET, [this]() { handleInvSetBatteryEqualizationOverTimeGet(); });
     _server.on("/inverter/pcvt", HTTP_GET, [this]() { handleInvSetMaxChargingTimeAtCvGet(); });
+
+    _server.on("/inverter/ignore_buzzer", HTTP_GET, [this]() { handleInvIgnoreBuzzerGet(); });
 }
 
 // ----- Generic LittleFS file upload (unrelated to config) -----
@@ -409,7 +413,13 @@ void WebPortal::handleLive() {
     // tab's live feed reads "full" instead of triggering its own QPIGS
     // query, reusing this same 2s poll() cycle.
     String out = buf;
-    out += ",\"full\":" + InverterJson::toJson(_inverter.lastStatus()) + "}";
+    out += ",\"full\":" + InverterJson::toJson(_inverter.lastStatus());
+
+    // Battery-low buzzer state (see BuzzerIgnoreControl) - also just reused
+    // from its own background poll, no extra query triggered from here.
+    out += ",\"buzz\":{\"lowAlarm\":" + String(_buzzerIgnore.batteryLowAlarmActive() ? "true" : "false") +
+           ",\"ignoreActive\":" + String(_buzzerIgnore.ignoreActive() ? "true" : "false") + "}}";
+
     _server.send(200, "application/json", out);
 }
 
@@ -795,4 +805,8 @@ void WebPortal::handleInvSetMaxChargingTimeAtCvGet() {
     if (!requireArg("minutes")) return;
     SetMaxChargingTimeAtCvRequest req{(uint16_t)_server.arg("minutes").toInt()};
     sendInverterSetResult(_server, _inverter.device().setMaxChargingTimeAtCv(req));
+}
+
+void WebPortal::handleInvIgnoreBuzzerGet() {
+    sendInverterSetResult(_server, _buzzerIgnore.activateIgnore(_inverter));
 }

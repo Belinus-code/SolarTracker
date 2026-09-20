@@ -1,5 +1,6 @@
 #include <LittleFS.h>
 
+#include "BuzzerIgnoreControl.h"
 #include "EnergyLog.h"
 #include "InverterLink.h"
 #include "InverterRelay.h"
@@ -21,7 +22,8 @@ MainsSensor mainsSensor(kMainsSensePin);
 InverterLink inverter(Serial2, kInverterRxPin, kInverterTxPin);
 EnergyLog energyLog;
 InverterRelay relay(kInverterRelayPin, mainsSensor, config);
-WebPortal webPortal(config, inverter, energyLog, relay);
+BuzzerIgnoreControl buzzerIgnore;
+WebPortal webPortal(config, inverter, energyLog, relay, buzzerIgnore);
 
 uint32_t lastSampleMs = 0;
 
@@ -66,6 +68,7 @@ void loop() {
                 Serial.println("Querry Failed!");
             }
             energyLog.addSample(inverter.lastReading(), config.sampleCycleMs);
+            buzzerIgnore.update(inverter, config.savingCycleMs);
         }
     }
 
